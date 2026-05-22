@@ -56,6 +56,8 @@ class ScanResult(BaseModel):
     plain_text: str
     confidence_percent: float
     error_estimate_percent: float
+    coherence_score: float
+    coherence_note: str
     attempts: int
     created_at: str
 
@@ -73,7 +75,9 @@ GPT_OCR_PROMPT = (
     "{\n"
     '  "structured_text": "<markdown med rubriker som **fet text** på egen rad, listor som -, behåll radbrytningar>",\n'
     '  "plain_text": "<endast extraherad text, ingen markdown>",\n'
-    '  "self_confidence": <0-100 hur säker du är på avläsningen>\n'
+    '  "self_confidence": <0-100 hur säker du är på avläsningen visuellt>,\n'
+    '  "coherence_score": <0-100 hur SEMANTISKT RIMLIG texten är som ett verkligt dokument: språkligt sammanhang, logisk struktur, meningsbyggnad, kontext, plausibla värden – INTE bara att enskilda ord är korrekt stavade. Slumpmässigt korrekt stavade ord utan sammanhang = lågt. En sammanhängande faktura/brev/anteckning = högt.>,\n'
+    '  "coherence_note": "<kort svensk notering (max 120 tecken) om eventuella sammanhangsproblem, t.ex. \\"ord saknar kontext\\", \\"verkar vara fragment\\", eller tomt om allt ser rimligt ut>"\n'
     "}\n"
     "Hitta rubriker (kortare rader, titlar, sektioner) och markera dem med **dubbla asterisker**. "
     "Bevara ordning. Skriv inget utanför JSON-objektet. Inga kodstaket."
@@ -88,7 +92,9 @@ GPT_RESCAN_PROMPT_TMPL = (
     "{{\n"
     '  "structured_text": "<markdown, rubriker som **fet text**>",\n'
     '  "plain_text": "<endast text>",\n'
-    '  "self_confidence": <0-100>\n'
+    '  "self_confidence": <0-100 visuell läsning>,\n'
+    '  "coherence_score": <0-100 SEMANTISK rimlighet som verkligt dokument, INTE bara stavning>,\n'
+    '  "coherence_note": "<max 120 tecken eller tomt>"\n'
     "}}\n"
     "Inga kodstaket, ingen text utanför JSON."
 )
@@ -151,9 +157,10 @@ async def _gemini_text(image_b64: str) -> str:
     return str(raw).strip()
 
 
-def _confidence(gpt_self: float, gemini_text: str, gpt_plain: str, attempts: int) -> float:
+def _confidence(gpt_self: float, coherence: float, gemini_text: str, gpt_plain: str, attempts: int) -> float:
     sim = _similarity(gemini_text, gpt_plain) * 100.0
-    base = 0.6 * sim + 0.4 * float(gpt_self or 0)
+    # visual reading agreement (similarity vs GPT self-confidence) + semantic plausibility
+    base = 0.45 * sim + 0.25 * float(gpt_self or 0) + 0.30 * float(coherence or 0)
     # bonus per extra attempt (caps at +12 across 4 attempts)
     bonus = min(12.0, max(0, attempts - 1) * 4.0)
     final = min(99.0, base + bonus)
@@ -197,8 +204,10 @@ async def ocr_scan(req: ScanRequest):
         structured = gpt_res.get("structured_text", "")
         plain = gpt_res.get("plain_text", "") or re.sub(r"\*\*", "", structured)
         self_conf = float(gpt_res.get("self_confidence", 60) or 60)
+        coherence = float(gpt_res.get("coherence_score", 60) or 60)
+        coh_note = str(gpt_res.get("coherence_note", "") or "")
 
-        confidence = _confidence(self_conf, gem_text or "", plain, attempts=1)
+        confidence = _confidence(self_conf, coherence, gem_text or "", plain, attempts=1)
         error = round(max(0.0, 100.0 - confidence), 1)
 
         scan = {
@@ -207,6 +216,8 @@ async def ocr_scan(req: ScanRequest):
             "plain_text": plain,
             "confidence_percent": confidence,
             "error_estimate_percent": error,
+            "coherence_score": round(coherence, 1),
+            "coherence_note": coh_note,
             "attempts": 1,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "gemini_text": gem_text or "",
@@ -242,9 +253,11 @@ async def ocr_rescan(req: RescanRequest):
         structured = gpt_res.get("structured_text", "")
         plain = gpt_res.get("plain_text", "") or re.sub(r"\*\*", "", structured)
         self_conf = float(gpt_res.get("self_confidence", 70) or 70)
+        coherence = float(gpt_res.get("coherence_score", 70) or 70)
+        coh_note = str(gpt_res.get("coherence_note", "") or "")
 
         attempts = max(2, int(req.attempts or 1) + 1)
-        confidence = _confidence(self_conf, gem_text or "", plain, attempts=attempts)
+        confidence = _confidence(self_conf, coherence, gem_text or "", plain, attempts=attempts)
         # ensure rescan only improves
         if confidence < float(req.previous_confidence or 0):
             confidence = round(min(99.0, float(req.previous_confidence) + 2.0), 1)
@@ -256,6 +269,8 @@ async def ocr_rescan(req: RescanRequest):
             "plain_text": plain,
             "confidence_percent": confidence,
             "error_estimate_percent": error,
+            "coherence_score": round(coherence, 1),
+            "coherence_note": coh_note,
             "attempts": attempts,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "gemini_text": gem_text or "",

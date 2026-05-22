@@ -85,6 +85,10 @@ export default function Index() {
           confidence: data.confidence_percent || rescanTarget.confidence,
           errorEstimate:
             data.error_estimate_percent || rescanTarget.errorEstimate,
+          coherenceScore:
+            data.coherence_score ?? rescanTarget.coherenceScore,
+          coherenceNote:
+            data.coherence_note ?? rescanTarget.coherenceNote,
           attempts: data.attempts || rescanTarget.attempts + 1,
         });
         router.replace(`/page/${rescanTarget.id}`);
@@ -109,6 +113,8 @@ export default function Index() {
         plainText: data.plain_text || "",
         confidence: data.confidence_percent || 0,
         errorEstimate: data.error_estimate_percent || 0,
+        coherenceScore: data.coherence_score || 0,
+        coherenceNote: data.coherence_note || "",
         attempts: data.attempts || 1,
       };
       addScan(scan);

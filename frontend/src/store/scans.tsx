@@ -7,6 +7,8 @@ export type Scan = {
   plainText: string;
   confidence: number;
   errorEstimate: number;
+  coherenceScore: number;
+  coherenceNote: string;
   attempts: number;
 };
 

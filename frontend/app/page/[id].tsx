@@ -112,7 +112,7 @@ export default function PageDetail() {
   }
 
   const color = confColor(scan.confidence);
-  const lowConf = scan.confidence < 90;
+  const lowConf = scan.confidence < 90 || scan.coherenceScore < 70;
 
   return (
     <KeyboardAvoidingView
@@ -166,6 +166,40 @@ export default function PageDetail() {
           <Text style={styles.confMuted}>
             Uppskattat fel: ~{Math.round(scan.errorEstimate)}% av texten kan vara felaktig.
           </Text>
+
+          {/* Semantic coherence sub-row */}
+          <View style={styles.cohRow}>
+            <View
+              style={[
+                styles.cohDot,
+                {
+                  backgroundColor:
+                    scan.coherenceScore >= 80
+                      ? "#16A34A"
+                      : scan.coherenceScore >= 60
+                      ? "#D97706"
+                      : "#DC2626",
+                },
+              ]}
+            />
+            <Text style={styles.cohLabel}>
+              Innehållsrimlighet:{" "}
+              <Text style={styles.cohValue}>
+                {Math.round(scan.coherenceScore)}%
+              </Text>
+            </Text>
+          </View>
+          {scan.coherenceScore < 70 && (
+            <View style={styles.cohWarn} testID="coherence-warning">
+              <Ionicons name="warning-outline" size={16} color="#92400E" />
+              <Text style={styles.cohWarnText}>
+                {scan.coherenceNote
+                  ? scan.coherenceNote
+                  : "Texten verkar inte hänga ihop som ett vanligt dokument – kontrollera innehållet."}
+              </Text>
+            </View>
+          )}
+
           {lowConf && (
             <TouchableOpacity
               style={[
@@ -326,6 +360,29 @@ const styles = StyleSheet.create({
   },
   rescanBtnUrgent: { backgroundColor: "#FEE2E2", borderColor: "#FCA5A5" },
   rescanBtnText: { color: "#DC2626", fontWeight: "700" },
+
+  cohRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 2,
+  },
+  cohDot: { width: 8, height: 8, borderRadius: 4 },
+  cohLabel: { color: "#71717A", fontSize: 13 },
+  cohValue: { color: "#09090B", fontWeight: "800" },
+  cohWarn: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: "#FEF3C7",
+    borderColor: "#FDE68A",
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginTop: 4,
+  },
+  cohWarnText: { flex: 1, color: "#92400E", fontSize: 13, lineHeight: 18 },
 
   ocrCard: {
     backgroundColor: "#fff",

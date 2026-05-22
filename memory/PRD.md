@@ -26,9 +26,17 @@ emails the combined result to fixed recipients through commhub.cloud.
     is `**` stripped.
 
 ### Confidence formula
-`confidence = 0.6 * similarity(gpt_plain, gemini_plain)*100 + 0.4 * gpt_self_confidence`
+`confidence = 0.45 * similarity(gpt_plain, gemini_plain)*100 + 0.25 * gpt_self_confidence + 0.30 * coherence_score`
 plus a `+4` per re-attempt bonus capped at `+12`, hard-capped at 99. Re-attempts
 are guaranteed to be `>= previous_confidence`.
+
+`coherence_score` is asked from GPT-5.2 separately: it grades how semantically
+plausible the text is as a real document (logical flow, sentence structure,
+plausible values) — **not** whether individual words are spelled correctly.
+This catches "all valid Swedish words but in random order" cases.
+
+`coherence_note` (≤120 chars) is shown to the user as a yellow warning banner
+when `coherence_score < 70`.
 
 ## Frontend Screens (`/app/frontend/app`)
 - `_layout.tsx` — Stack + `ScansProvider` (in-memory store)
