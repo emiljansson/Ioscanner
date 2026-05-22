@@ -34,6 +34,14 @@ export default function Index() {
   const cameraRef = useRef<CameraView>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [flash, setFlash] = useState<"off" | "auto" | "on">("auto");
+
+  const cycleFlash = useCallback(() => {
+    setFlash((f) => (f === "off" ? "auto" : f === "auto" ? "on" : "off"));
+  }, []);
+  const flashIcon =
+    flash === "on" ? "flash" : flash === "auto" ? "flash-outline" : "flash-off";
+  const flashLabel = flash === "on" ? "PÅ" : flash === "auto" ? "AUTO" : "AV";
 
   const rescanTarget = rescanId ? getScan(rescanId) : undefined;
   const rescanIdx = rescanTarget
@@ -164,6 +172,7 @@ export default function Index() {
         ref={cameraRef}
         style={StyleSheet.absoluteFill}
         facing="back"
+        flash={flash}
       />
 
       {/* Top bar */}
@@ -178,15 +187,26 @@ export default function Index() {
               : "OCR · AI · Mail"}
           </Text>
         </View>
-        {rescanTarget ? (
+        <View style={{ flexDirection: "row", gap: 8 }}>
           <TouchableOpacity
-            style={styles.cancelPill}
-            onPress={() => router.replace(`/page/${rescanTarget.id}`)}
-            testID="cancel-rescan-btn"
+            style={styles.flashPill}
+            onPress={cycleFlash}
+            testID="flash-toggle-btn"
+            activeOpacity={0.8}
           >
-            <Text style={styles.cancelPillText}>Avbryt</Text>
+            <Ionicons name={flashIcon as any} size={16} color="#fff" />
+            <Text style={styles.flashPillText}>{flashLabel}</Text>
           </TouchableOpacity>
-        ) : null}
+          {rescanTarget ? (
+            <TouchableOpacity
+              style={styles.cancelPill}
+              onPress={() => router.replace(`/page/${rescanTarget.id}`)}
+              testID="cancel-rescan-btn"
+            >
+              <Text style={styles.cancelPillText}>Avbryt</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
       </View>
 
       {/* Frame overlay */}
@@ -308,6 +328,21 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   cancelPillText: { color: "#fff", fontWeight: "700", fontSize: 13 },
+  flashPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  flashPillText: {
+    color: "#fff",
+    fontWeight: "800",
+    fontSize: 11,
+    letterSpacing: 1,
+  },
   brand: {
     color: "#fff",
     fontWeight: "900",
