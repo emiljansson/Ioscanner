@@ -1,0 +1,158 @@
+{
+  "theme": "Light",
+  "archetype": "Swiss & High-Contrast",
+  "domain": "Productivity/Utility Mobile Web App",
+  "typography": {
+    "headings": {
+      "family": "Cabinet Grotesk, sans-serif",
+      "weights": ["700", "900"],
+      "usage": "Bold headers in OCR output, main screen titles, numerical data.",
+      "import_url": "https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@700,900&display=swap"
+    },
+    "body": {
+      "family": "IBM Plex Sans, sans-serif",
+      "weights": ["400", "500", "600"],
+      "usage": "OCR structured text, email composer content, standard labels, confidence scores.",
+      "import_url": "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+    }
+  },
+  "colors": {
+    "background": {
+      "primary": "#FAFAFA",
+      "secondary": "#F4F4F5",
+      "camera_overlay": "rgba(0, 0, 0, 0.75)"
+    },
+    "surface": {
+      "card": "#FFFFFF",
+      "glass": "rgba(255, 255, 255, 0.85)"
+    },
+    "text": {
+      "primary": "#09090B",
+      "secondary": "#71717A",
+      "inverse": "#FFFFFF"
+    },
+    "accents": {
+      "primary": "#09090B",
+      "scanner_laser": "#3B82F6",
+      "focus_ring": "#93C5FD",
+      "divider": "#E4E4E7"
+    },
+    "status": {
+      "confidence_high": "#16A34A",
+      "confidence_medium": "#D97706",
+      "confidence_low": "#DC2626"
+    }
+  },
+  "layout_and_spacing": {
+    "system": "Tailwind Mobile-First",
+    "base_padding": "p-4 md:p-6",
+    "generous_spacing": "gap-4 md:gap-6",
+    "border_radius": {
+      "small": "rounded-md",
+      "medium": "rounded-xl",
+      "large": "rounded-3xl",
+      "pill": "rounded-full"
+    },
+    "shadows": {
+      "subtle": "shadow-[0_2px_10px_rgba(0,0,0,0.05)]",
+      "floating": "shadow-[0_8px_30px_rgba(0,0,0,0.12)]"
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-zinc-950 text-white rounded-2xl py-4 px-6 font-semibold flex items-center justify-center active:scale-[0.98] transition-transform w-full",
+      "secondary": "bg-zinc-100 text-zinc-900 rounded-2xl py-4 px-6 font-semibold active:bg-zinc-200 transition-colors w-full",
+      "rescan": "bg-red-50 text-red-600 border border-red-200 rounded-xl py-3 px-5 font-semibold active:bg-red-100 transition-colors",
+      "recipient_target": "relative aspect-square rounded-3xl bg-zinc-50 border-2 border-zinc-200 hover:border-zinc-900 focus:border-zinc-900 flex flex-col items-center justify-center gap-3 transition-all active:scale-[0.98] overflow-hidden group",
+      "capture_shutter": "w-20 h-20 rounded-full border-[6px] border-zinc-300 bg-white flex items-center justify-center active:scale-95 transition-transform shadow-lg"
+    },
+    "cards": {
+      "thumbnail": "relative rounded-xl overflow-hidden border-2 border-zinc-200 bg-zinc-100 w-16 h-20 active:border-blue-500",
+      "ocr_result": "bg-white border border-zinc-200 rounded-3xl p-6 shadow-subtle w-full"
+    },
+    "badges": {
+      "confidence": "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold tracking-wide"
+    },
+    "inputs": {
+      "text_area": "w-full bg-zinc-50 border border-zinc-200 rounded-2xl p-4 font-body text-base min-h-[200px] focus:ring-2 focus:ring-zinc-900 focus:border-transparent outline-none",
+      "subject_line": "w-full bg-transparent border-b border-zinc-200 py-3 text-lg font-heading font-bold placeholder:text-zinc-400 focus:border-zinc-900 outline-none"
+    }
+  },
+  "screens": [
+    {
+      "name": "Camera Scanner",
+      "features": [
+        "Full screen viewport simulating device camera.",
+        "Dark overlay mask (camera_overlay) with a clear central rectangle for document framing.",
+        "Bottom control bar with 'capture_shutter' button centered.",
+        "Bottom left thumbnail gallery showing count of already scanned pages."
+      ]
+    },
+    {
+      "name": "Scan Review & OCR",
+      "features": [
+        "Displays cropped image of document at the top (max-h-[30vh]).",
+        "Confidence score badge prominently displayed below image (Grön > 90%, Gul 70-90%, Röd < 70%).",
+        "Structured text output area with Headings parsed as Cabinet Grotesk (font-heading).",
+        "'Scanna om' (Rescan) button visible, highlighted particularly if confidence is yellow/red.",
+        "Bottom action bar with 'Lägg till sida' (Add page) and 'Fortsätt' (Continue) buttons."
+      ]
+    },
+    {
+      "name": "Email Composer & Send",
+      "features": [
+        "Editable Subject line input (subject_line style).",
+        "Scrollable text area containing combined structured OCR text from all scanned pages.",
+        "Recipients Section: 2x2 Grid of 4 Fixed Recipient Buttons (Emil, Louise, Anton, William).",
+        "Recipient buttons should act as radio/toggles for selecting who to send to.",
+        "Sticky bottom 'Skicka' (Send) primary action button via Commhub.",
+        "Success toast/modal on dispatch."
+      ]
+    }
+  ],
+  "localization": {
+    "language": "Swedish",
+    "terms": {
+      "scan": "Scanna",
+      "rescan": "Scanna om",
+      "add_page": "Lägg till sida",
+      "continue": "Fortsätt",
+      "send": "Skicka",
+      "subject": "Ämne",
+      "confidence": "Tillförlitlighet",
+      "recipients": "Mottagare"
+    }
+  },
+  "testing": {
+    "data_testids": [
+      "camera-capture-btn",
+      "scanned-thumbnail-btn",
+      "rescan-btn",
+      "add-page-btn",
+      "continue-btn",
+      "email-subject-input",
+      "recipient-emil-btn",
+      "recipient-louise-btn",
+      "recipient-anton-btn",
+      "recipient-william-btn",
+      "send-email-btn",
+      "confidence-badge"
+    ]
+  },
+  "media": {
+    "app_logo": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/69292113-0cb2-46bc-9980-2654cbd2f109/images/0b34159b9bd520c2e1421d9245f61c837683e32dd21571500796620a8fea7860.png",
+      "description": "Minimalist b/w app icon for empty states or splash screen. Use in Header or Loading states."
+    }
+  },
+  "instructions_to_main_agent": [
+    "Build as a mobile web app simulating iOS native behavior (React Native Expo style translated to web using Tailwind).",
+    "No login required. The app should open directly to the Camera view.",
+    "Implement the Swedish localization terms strictly.",
+    "The UI must feel like a native iOS app. Ensure all interactive elements have active scale transitions (`active:scale-[0.98]`).",
+    "Use Phosphor Icons (`@phosphor-icons/react`) for UI icons and recipient avatars if no photo is available (e.g., User icons).",
+    "Parse OCR output dynamically to ensure headers are explicitly bolded using the `Cabinet Grotesk` font.",
+    "Enforce APCA contrast ratios on all text over backgrounds.",
+    "Ensure `data-testid` is added to all interactive elements as defined in the testing section."
+  ]
+}
