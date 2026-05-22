@@ -204,23 +204,15 @@ export default function PageDetail() {
             <TouchableOpacity
               style={[
                 styles.rescanBtn,
-                rescanBusy && { opacity: 0.6 },
                 scan.confidence < 70 && styles.rescanBtnUrgent,
               ]}
               onPress={handleRescan}
-              disabled={rescanBusy}
               testID="rescan-btn"
             >
-              {rescanBusy ? (
-                <ActivityIndicator color="#DC2626" />
-              ) : (
-                <>
-                  <Ionicons name="refresh" size={18} color="#DC2626" />
-                  <Text style={styles.rescanBtnText}>
-                    Försök igen (förbättra)
-                  </Text>
-                </>
-              )}
+              <Ionicons name="camera-reverse" size={18} color="#DC2626" />
+              <Text style={styles.rescanBtnText}>
+                Ta nytt foto (förbättra)
+              </Text>
             </TouchableOpacity>
           )}
         </View>
