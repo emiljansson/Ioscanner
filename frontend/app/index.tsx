@@ -14,7 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as ImageManipulator from "expo-image-manipulator";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { useScans, type Scan } from "@/src/store/scans";
 
 const BACKEND = process.env.EXPO_PUBLIC_BACKEND_URL!;
@@ -28,11 +28,17 @@ function confColor(c: number) {
 export default function Index() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { scans, addScan } = useScans();
+  const { rescanId } = useLocalSearchParams<{ rescanId?: string }>();
+  const { scans, addScan, updateScan, getScan } = useScans();
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const rescanTarget = rescanId ? getScan(rescanId) : undefined;
+  const rescanIdx = rescanTarget
+    ? scans.findIndex((s) => s.id === rescanTarget.id)
+    : -1;
 
   const handleCapture = useCallback(async () => {
     if (!cameraRef.current || busy) return;
@@ -55,7 +61,37 @@ export default function Index() {
       const b64 = manipulated.base64;
       if (!b64) throw new Error("Kunde inte koda bilden");
 
-      // 3) call backend OCR
+      // 3a) RESCAN mode — improve an existing page with a new photo
+      if (rescanTarget) {
+        const res = await fetch(`${BACKEND}/api/ocr/rescan`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            image_base64: b64,
+            previous_text: rescanTarget.structuredText,
+            previous_confidence: rescanTarget.confidence,
+            attempts: rescanTarget.attempts,
+          }),
+        });
+        if (!res.ok) {
+          const t = await res.text();
+          throw new Error(`Rescan fel (${res.status}): ${t.slice(0, 200)}`);
+        }
+        const data = await res.json();
+        updateScan(rescanTarget.id, {
+          imageUri: manipulated.uri,
+          structuredText: data.structured_text || rescanTarget.structuredText,
+          plainText: data.plain_text || rescanTarget.plainText,
+          confidence: data.confidence_percent || rescanTarget.confidence,
+          errorEstimate:
+            data.error_estimate_percent || rescanTarget.errorEstimate,
+          attempts: data.attempts || rescanTarget.attempts + 1,
+        });
+        router.replace(`/page/${rescanTarget.id}`);
+        return;
+      }
+
+      // 3b) NEW SCAN mode
       const res = await fetch(`${BACKEND}/api/ocr/scan`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -80,11 +116,14 @@ export default function Index() {
     } catch (e: any) {
       console.error(e);
       setError(e?.message ?? "Något gick fel");
-      Alert.alert("Scan misslyckades", e?.message ?? "Okänt fel");
+      Alert.alert(
+        rescanTarget ? "Rescan misslyckades" : "Scan misslyckades",
+        e?.message ?? "Okänt fel"
+      );
     } finally {
       setBusy(false);
     }
-  }, [busy, addScan, router]);
+  }, [busy, addScan, updateScan, router, rescanTarget]);
 
   // Permission states
   if (!permission) {
@@ -123,8 +162,25 @@ export default function Index() {
 
       {/* Top bar */}
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
-        <Text style={styles.brand}>JAWEL SCANNER</Text>
-        <Text style={styles.brandSub}>OCR · AI · Mail</Text>
+        <View>
+          <Text style={styles.brand}>
+            {rescanTarget ? `FÖRBÄTTRA SIDA ${rescanIdx + 1}` : "JAWEL SCANNER"}
+          </Text>
+          <Text style={styles.brandSub}>
+            {rescanTarget
+              ? `Försök ${rescanTarget.attempts + 1} · ta nytt foto`
+              : "OCR · AI · Mail"}
+          </Text>
+        </View>
+        {rescanTarget ? (
+          <TouchableOpacity
+            style={styles.cancelPill}
+            onPress={() => router.replace(`/page/${rescanTarget.id}`)}
+            testID="cancel-rescan-btn"
+          >
+            <Text style={styles.cancelPillText}>Avbryt</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       {/* Frame overlay */}
@@ -202,7 +258,9 @@ export default function Index() {
         <View style={styles.busyOverlay} pointerEvents="none">
           <View style={styles.busyCard}>
             <ActivityIndicator color="#3B82F6" size="large" />
-            <Text style={styles.busyTitle}>Dualhead AI läser…</Text>
+            <Text style={styles.busyTitle}>
+              {rescanTarget ? "Förbättrar text…" : "Dualhead AI läser…"}
+            </Text>
             <Text style={styles.busySub}>GPT-5.2 + Gemini 3.1 Pro</Text>
           </View>
         </View>
@@ -237,6 +295,13 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
     justifyContent: "space-between",
   },
+  cancelPill: {
+    backgroundColor: "rgba(255,255,255,0.15)",
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  cancelPillText: { color: "#fff", fontWeight: "700", fontSize: 13 },
   brand: {
     color: "#fff",
     fontWeight: "900",

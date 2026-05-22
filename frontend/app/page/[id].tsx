@@ -6,7 +6,6 @@ import {
   ScrollView,
   TouchableOpacity,
   Image,
-  ActivityIndicator,
   Alert,
   TextInput,
   Platform,
@@ -15,10 +14,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import * as ImageManipulator from "expo-image-manipulator";
 import { useScans } from "@/src/store/scans";
-
-const BACKEND = process.env.EXPO_PUBLIC_BACKEND_URL!;
 
 function confColor(c: number) {
   if (c >= 90) return "#16A34A";
@@ -73,7 +69,6 @@ export default function PageDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { scans, getScan, updateScan, removeScan } = useScans();
   const scan = getScan(id || "");
-  const [rescanBusy, setRescanBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(scan?.structuredText || "");
 
@@ -82,47 +77,13 @@ export default function PageDetail() {
     [scans, id]
   );
 
-  const handleRescan = useCallback(async () => {
+  const handleRescan = useCallback(() => {
     if (!scan) return;
-    setRescanBusy(true);
-    try {
-      // Re-encode current image to base64 (already a local jpeg)
-      const m = await ImageManipulator.manipulateAsync(
-        scan.imageUri,
-        [{ resize: { width: 1600 } }],
-        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true }
-      );
-      const b64 = m.base64;
-      if (!b64) throw new Error("Kunde inte koda bilden");
-      const res = await fetch(`${BACKEND}/api/ocr/rescan`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          image_base64: b64,
-          previous_text: scan.structuredText,
-          previous_confidence: scan.confidence,
-          attempts: scan.attempts,
-        }),
-      });
-      if (!res.ok) {
-        const t = await res.text();
-        throw new Error(`Rescan fel (${res.status}): ${t.slice(0, 200)}`);
-      }
-      const data = await res.json();
-      updateScan(scan.id, {
-        structuredText: data.structured_text || scan.structuredText,
-        plainText: data.plain_text || scan.plainText,
-        confidence: data.confidence_percent || scan.confidence,
-        errorEstimate: data.error_estimate_percent || scan.errorEstimate,
-        attempts: data.attempts || scan.attempts + 1,
-      });
-      setDraft(data.structured_text || scan.structuredText);
-    } catch (e: any) {
-      Alert.alert("Rescan misslyckades", e?.message ?? "Okänt fel");
-    } finally {
-      setRescanBusy(false);
-    }
-  }, [scan, updateScan]);
+    // Open the camera to take a NEW photo. The capture flow on the camera
+    // screen will call /api/ocr/rescan with the previous text and update
+    // this scan in-place.
+    router.push(`/?rescanId=${scan.id}`);
+  }, [scan, router]);
 
   const handleDelete = useCallback(() => {
     if (!scan) return;
