@@ -97,6 +97,11 @@ export default function Index() {
             data.coherence_score ?? rescanTarget.coherenceScore,
           coherenceNote:
             data.coherence_note ?? rescanTarget.coherenceNote,
+          pageNumber:
+            data.page_number ?? rescanTarget.pageNumber,
+          pageSource:
+            data.page_source || rescanTarget.pageSource,
+          pageNote: data.page_note ?? rescanTarget.pageNote,
           attempts: data.attempts || rescanTarget.attempts + 1,
         });
         router.replace(`/page/${rescanTarget.id}`);
@@ -123,6 +128,9 @@ export default function Index() {
         errorEstimate: data.error_estimate_percent || 0,
         coherenceScore: data.coherence_score || 0,
         coherenceNote: data.coherence_note || "",
+        pageNumber: data.page_number ?? null,
+        pageSource: data.page_source || "missing",
+        pageNote: data.page_note || "",
         attempts: data.attempts || 1,
       };
       addScan(scan);
@@ -271,12 +279,12 @@ export default function Index() {
             styles.mailBtn,
             { opacity: scans.length ? 1 : 0.4 },
           ]}
-          onPress={() => scans.length && router.push("/email")}
+          onPress={() => scans.length && router.push("/pages")}
           disabled={!scans.length}
-          testID="open-email-btn"
+          testID="open-pages-btn"
         >
-          <Ionicons name="mail" size={22} color="#fff" />
-          <Text style={styles.mailBtnText}>Mail</Text>
+          <Ionicons name="copy-outline" size={20} color="#fff" />
+          <Text style={styles.mailBtnText}>Sidor</Text>
         </TouchableOpacity>
       </View>
 

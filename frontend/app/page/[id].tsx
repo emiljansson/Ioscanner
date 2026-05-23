@@ -272,10 +272,10 @@ export default function PageDetail() {
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.primaryBtnRow}
-          onPress={() => router.push("/email")}
+          onPress={() => router.push("/pages")}
           testID="continue-btn"
         >
-          <Text style={styles.primaryBtnText}>Fortsätt</Text>
+          <Text style={styles.primaryBtnText}>Alla sidor</Text>
           <Ionicons name="arrow-forward" size={18} color="#fff" />
         </TouchableOpacity>
       </View>
@@ -375,6 +375,31 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   cohWarnText: { flex: 1, color: "#92400E", fontSize: 13, lineHeight: 18 },
+
+  pageNumCard: {
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#E4E4E7",
+    gap: 6,
+  },
+  pageNumBadge: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  pageNumBadgeFound: { backgroundColor: "#D1FAE5", borderColor: "#A7F3D0" },
+  pageNumBadgeInferred: { backgroundColor: "#FEF3C7", borderColor: "#FDE68A" },
+  pageNumBadgeMissing: { backgroundColor: "#F4F4F5", borderColor: "#E4E4E7" },
+  pageNumText: { fontWeight: "800", fontSize: 14 },
+  pageNumSub: { color: "#71717A", fontSize: 13 },
+  pageNumNote: { color: "#52525B", fontSize: 12, fontStyle: "italic" },
 
   ocrCard: {
     backgroundColor: "#fff",

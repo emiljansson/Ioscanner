@@ -11,7 +11,7 @@ export default function RootLayout() {
         <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#FAFAFA" } }}>
           <Stack.Screen name="index" />
           <Stack.Screen name="page/[id]" />
-          <Stack.Screen name="email" />
+          <Stack.Screen name="pages" />
         </Stack>
       </ScansProvider>
     </SafeAreaProvider>

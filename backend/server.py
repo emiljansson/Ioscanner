@@ -9,9 +9,8 @@ import logging
 import asyncio
 import uuid
 import difflib
-import httpx
 from pathlib import Path
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime, timezone
 
@@ -26,10 +25,6 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
-COMMHUB_API_KEY = os.environ.get('COMMHUB_API_KEY', '')
-COMMHUB_APP_ID = os.environ.get('COMMHUB_APP_ID', '')
-COMMHUB_FROM = os.environ.get('COMMHUB_FROM', 'noreply@grindstugatan.se')
-COMMHUB_URL = "https://commhub.cloud/api/email/send"
 
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
@@ -58,14 +53,29 @@ class ScanResult(BaseModel):
     error_estimate_percent: float
     coherence_score: float
     coherence_note: str
+    page_number: Optional[int] = None
+    page_source: str = "missing"  # "found" | "inferred" | "missing"
+    page_note: str = ""
     attempts: int
     created_at: str
 
 
-class EmailRequest(BaseModel):
-    to: List[str]
-    subject: str
-    body_markdown: str
+class OrganizePage(BaseModel):
+    id: str
+    plain_text: str
+    detected_page_number: Optional[int] = None
+    capture_order: int
+
+
+class OrganizeRequest(BaseModel):
+    pages: List[OrganizePage]
+
+
+class OrganizedPage(BaseModel):
+    id: str
+    page_number: int
+    source: str  # "found" | "inferred"
+    note: str = ""
 
 
 # ---------- AI prompts ----------
@@ -76,8 +86,10 @@ GPT_OCR_PROMPT = (
     '  "structured_text": "<markdown med rubriker som **fet text** på egen rad, listor som -, behåll radbrytningar>",\n'
     '  "plain_text": "<endast extraherad text, ingen markdown>",\n'
     '  "self_confidence": <0-100 hur säker du är på avläsningen visuellt>,\n'
-    '  "coherence_score": <0-100 hur SEMANTISKT RIMLIG texten är som ett verkligt dokument: språkligt sammanhang, logisk struktur, meningsbyggnad, kontext, plausibla värden – INTE bara att enskilda ord är korrekt stavade. Slumpmässigt korrekt stavade ord utan sammanhang = lågt. En sammanhängande faktura/brev/anteckning = högt.>,\n'
-    '  "coherence_note": "<kort svensk notering (max 120 tecken) om eventuella sammanhangsproblem, t.ex. \\"ord saknar kontext\\", \\"verkar vara fragment\\", eller tomt om allt ser rimligt ut>"\n'
+    '  "coherence_score": <0-100 hur SEMANTISKT RIMLIG texten är som ett verkligt dokument>,\n'
+    '  "coherence_note": "<max 120 tecken eller tomt>",\n'
+    '  "page_number": <heltal om ett sidnummer SYNS på sidan (t.ex. \\"Sida 3\\", \\"3 (4)\\", \\"-3-\\", sidfot etc.), annars null>,\n'
+    '  "page_note": "<kort svensk notering om hur sidnumret hittades, eller tomt>"\n'
     "}\n"
     "Hitta rubriker (kortare rader, titlar, sektioner) och markera dem med **dubbla asterisker**. "
     "Bevara ordning. Skriv inget utanför JSON-objektet. Inga kodstaket."
@@ -92,9 +104,11 @@ GPT_RESCAN_PROMPT_TMPL = (
     "{{\n"
     '  "structured_text": "<markdown, rubriker som **fet text**>",\n'
     '  "plain_text": "<endast text>",\n'
-    '  "self_confidence": <0-100 visuell läsning>,\n'
-    '  "coherence_score": <0-100 SEMANTISK rimlighet som verkligt dokument, INTE bara stavning>,\n'
-    '  "coherence_note": "<max 120 tecken eller tomt>"\n'
+    '  "self_confidence": <0-100>,\n'
+    '  "coherence_score": <0-100>,\n'
+    '  "coherence_note": "<max 120 tecken eller tomt>",\n'
+    '  "page_number": <heltal om sidnummer syns, annars null>,\n'
+    '  "page_note": "<kort notering eller tomt>"\n'
     "}}\n"
     "Inga kodstaket, ingen text utanför JSON."
 )
@@ -104,7 +118,23 @@ GEMINI_VERIFY_PROMPT = (
     "No commentary, no markdown, no JSON. Preserve line breaks."
 )
 
+ORGANIZE_PROMPT = (
+    "Du får en lista skannade sidor i den ordning de fotograferades. Vissa har redan "
+    "ett upptäckt sidnummer, andra saknar det. Din uppgift:\n"
+    "1. Använd page_number om det finns och verkar rimligt utifrån innehållet.\n"
+    "2. För sidor utan upptäckt nummer: gissa det troligaste numret utifrån grannarnas "
+    "nummer + textens innehåll/sammanhang (t.ex. fortsatt mening, samma rubrik, datumlogik).\n"
+    "3. Om det rimligaste numret är ett heltal som passar i sekvensen mellan grannarna, "
+    "använd det. Annars välj nästa lediga heltal i sekvensen.\n"
+    "4. Två sidor får ALDRIG samma slutliga nummer – välj då nästa lediga.\n"
+    "5. source ska vara \"found\" om vi behöll det redan upptäckta numret, annars \"inferred\".\n"
+    "6. note: 1 mening på svenska som motiverar valet om source=inferred, annars tom.\n\n"
+    "Returnera STRIKT JSON utan kodstaket:\n"
+    '{ "pages": [ { "id": "<samma id>", "page_number": <heltal>, "source": "found|inferred", "note": "<sv>" } ] }'
+)
 
+
+# ---------- Helpers ----------
 def _strip_json(raw: str) -> str:
     raw = raw.strip()
     if raw.startswith("```"):
@@ -126,6 +156,15 @@ def _similarity(a: str, b: str) -> float:
     return difflib.SequenceMatcher(None, a, b).ratio()
 
 
+def _to_int_or_none(v) -> Optional[int]:
+    try:
+        if v is None or v == "" or v is False:
+            return None
+        return int(v)
+    except Exception:
+        return None
+
+
 async def _gpt_ocr(image_b64: str, prompt: str) -> dict:
     chat = LlmChat(
         api_key=EMERGENT_LLM_KEY,
@@ -143,6 +182,10 @@ async def _gpt_ocr(image_b64: str, prompt: str) -> dict:
             "structured_text": cleaned,
             "plain_text": re.sub(r"\*\*", "", cleaned),
             "self_confidence": 50,
+            "coherence_score": 50,
+            "coherence_note": "",
+            "page_number": None,
+            "page_note": "",
         }
 
 
@@ -159,12 +202,40 @@ async def _gemini_text(image_b64: str) -> str:
 
 def _confidence(gpt_self: float, coherence: float, gemini_text: str, gpt_plain: str, attempts: int) -> float:
     sim = _similarity(gemini_text, gpt_plain) * 100.0
-    # visual reading agreement (similarity vs GPT self-confidence) + semantic plausibility
     base = 0.45 * sim + 0.25 * float(gpt_self or 0) + 0.30 * float(coherence or 0)
-    # bonus per extra attempt (caps at +12 across 4 attempts)
     bonus = min(12.0, max(0, attempts - 1) * 4.0)
     final = min(99.0, base + bonus)
     return round(final, 1)
+
+
+def _build_scan_result(gpt_res: dict, gem_text: str, attempts: int, prev_conf: float = 0.0) -> dict:
+    structured = gpt_res.get("structured_text", "")
+    plain = gpt_res.get("plain_text", "") or re.sub(r"\*\*", "", structured)
+    self_conf = float(gpt_res.get("self_confidence", 60) or 60)
+    coherence = float(gpt_res.get("coherence_score", 60) or 60)
+    coh_note = str(gpt_res.get("coherence_note", "") or "")
+    page_num = _to_int_or_none(gpt_res.get("page_number"))
+    page_note = str(gpt_res.get("page_note", "") or "")
+
+    confidence = _confidence(self_conf, coherence, gem_text or "", plain, attempts=attempts)
+    if confidence < prev_conf:
+        confidence = round(min(99.0, prev_conf + 2.0), 1)
+    error = round(max(0.0, 100.0 - confidence), 1)
+
+    return {
+        "id": str(uuid.uuid4()),
+        "structured_text": structured,
+        "plain_text": plain,
+        "confidence_percent": confidence,
+        "error_estimate_percent": error,
+        "coherence_score": round(coherence, 1),
+        "coherence_note": coh_note,
+        "page_number": page_num,
+        "page_source": "found" if page_num is not None else "missing",
+        "page_note": page_note,
+        "attempts": attempts,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 # ---------- Routes ----------
@@ -175,11 +246,7 @@ async def root():
 
 @api_router.get("/health")
 async def health():
-    return {
-        "ok": True,
-        "llm_key": bool(EMERGENT_LLM_KEY),
-        "commhub": bool(COMMHUB_API_KEY and COMMHUB_APP_ID),
-    }
+    return {"ok": True, "llm_key": bool(EMERGENT_LLM_KEY)}
 
 
 @api_router.post("/ocr/scan", response_model=ScanResult)
@@ -188,42 +255,16 @@ async def ocr_scan(req: ScanRequest):
         raise HTTPException(500, "EMERGENT_LLM_KEY missing")
     if not req.image_base64:
         raise HTTPException(400, "image_base64 required")
-
     try:
         gpt_task = _gpt_ocr(req.image_base64, GPT_OCR_PROMPT)
         gem_task = _gemini_text(req.image_base64)
         gpt_res, gem_text = await asyncio.gather(gpt_task, gem_task, return_exceptions=True)
-
         if isinstance(gpt_res, Exception):
-            logger.error(f"GPT OCR failed: {gpt_res}")
             raise HTTPException(502, f"GPT-5.2 OCR failed: {gpt_res}")
         if isinstance(gem_text, Exception):
-            logger.warning(f"Gemini verify failed, using GPT only: {gem_text}")
             gem_text = ""
-
-        structured = gpt_res.get("structured_text", "")
-        plain = gpt_res.get("plain_text", "") or re.sub(r"\*\*", "", structured)
-        self_conf = float(gpt_res.get("self_confidence", 60) or 60)
-        coherence = float(gpt_res.get("coherence_score", 60) or 60)
-        coh_note = str(gpt_res.get("coherence_note", "") or "")
-
-        confidence = _confidence(self_conf, coherence, gem_text or "", plain, attempts=1)
-        error = round(max(0.0, 100.0 - confidence), 1)
-
-        scan = {
-            "id": str(uuid.uuid4()),
-            "structured_text": structured,
-            "plain_text": plain,
-            "confidence_percent": confidence,
-            "error_estimate_percent": error,
-            "coherence_score": round(coherence, 1),
-            "coherence_note": coh_note,
-            "attempts": 1,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "gemini_text": gem_text or "",
-        }
-        await db.scans.insert_one(scan.copy())
-        scan.pop("gemini_text", None)
+        scan = _build_scan_result(gpt_res, gem_text or "", attempts=1)
+        await db.scans.insert_one({**scan, "gemini_text": gem_text or ""})
         return ScanResult(**scan)
     except HTTPException:
         raise
@@ -238,45 +279,22 @@ async def ocr_rescan(req: RescanRequest):
         raise HTTPException(500, "EMERGENT_LLM_KEY missing")
     if not req.image_base64:
         raise HTTPException(400, "image_base64 required")
-
     prompt = GPT_RESCAN_PROMPT_TMPL.format(prev=req.previous_text[:6000])
     try:
         gpt_task = _gpt_ocr(req.image_base64, prompt)
         gem_task = _gemini_text(req.image_base64)
         gpt_res, gem_text = await asyncio.gather(gpt_task, gem_task, return_exceptions=True)
-
         if isinstance(gpt_res, Exception):
             raise HTTPException(502, f"GPT-5.2 rescan failed: {gpt_res}")
         if isinstance(gem_text, Exception):
             gem_text = ""
-
-        structured = gpt_res.get("structured_text", "")
-        plain = gpt_res.get("plain_text", "") or re.sub(r"\*\*", "", structured)
-        self_conf = float(gpt_res.get("self_confidence", 70) or 70)
-        coherence = float(gpt_res.get("coherence_score", 70) or 70)
-        coh_note = str(gpt_res.get("coherence_note", "") or "")
-
         attempts = max(2, int(req.attempts or 1) + 1)
-        confidence = _confidence(self_conf, coherence, gem_text or "", plain, attempts=attempts)
-        # ensure rescan only improves
-        if confidence < float(req.previous_confidence or 0):
-            confidence = round(min(99.0, float(req.previous_confidence) + 2.0), 1)
-        error = round(max(0.0, 100.0 - confidence), 1)
-
-        scan = {
-            "id": str(uuid.uuid4()),
-            "structured_text": structured,
-            "plain_text": plain,
-            "confidence_percent": confidence,
-            "error_estimate_percent": error,
-            "coherence_score": round(coherence, 1),
-            "coherence_note": coh_note,
-            "attempts": attempts,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "gemini_text": gem_text or "",
-        }
-        await db.scans.insert_one(scan.copy())
-        scan.pop("gemini_text", None)
+        scan = _build_scan_result(
+            gpt_res, gem_text or "",
+            attempts=attempts,
+            prev_conf=float(req.previous_confidence or 0),
+        )
+        await db.scans.insert_one({**scan, "gemini_text": gem_text or ""})
         return ScanResult(**scan)
     except HTTPException:
         raise
@@ -285,67 +303,86 @@ async def ocr_rescan(req: RescanRequest):
         raise HTTPException(500, f"OCR rescan error: {e}")
 
 
-def _md_to_html(md: str) -> str:
-    """Minimal markdown -> HTML for emails. Supports **bold**, lines, and per-page H2."""
-    html = md
-    # bold
-    html = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", html, flags=re.DOTALL)
-    # H2 markers for pages
-    html = re.sub(r"^## (.+)$", r"<h2 style='font-family:sans-serif;margin:24px 0 8px;'>\1</h2>",
-                  html, flags=re.MULTILINE)
-    # line breaks
-    html = html.replace("\n", "<br/>")
-    return (
-        "<div style=\"font-family: -apple-system, Segoe UI, Roboto, sans-serif; "
-        "font-size:15px; line-height:1.55; color:#09090B; max-width:680px;\">"
-        f"{html}</div>"
-    )
+@api_router.post("/ocr/organize")
+async def ocr_organize(req: OrganizeRequest):
+    """Take all scanned pages, return them ordered with intelligent page numbering.
+    AI fills in 'inferred' numbers for pages where none was detected on the image.
+    Falls back to the capture order with simple sequential numbering if AI fails.
+    """
+    if not req.pages:
+        return {"pages": []}
 
-
-@api_router.post("/email/send")
-async def send_email(req: EmailRequest):
-    if not (COMMHUB_API_KEY and COMMHUB_APP_ID):
-        raise HTTPException(500, "commhub credentials missing")
-    if not req.to:
-        raise HTTPException(400, "recipient required")
-
-    payload = {
-        "app_id": COMMHUB_APP_ID,
-        "to": req.to,
-        "subject": req.subject or "Skannat dokument",
-        "html_content": _md_to_html(req.body_markdown or ""),
-        "text_content": re.sub(r"\*\*", "", req.body_markdown or ""),
-        "from_name": "Jawel Scanner",
-        "reply_to": COMMHUB_FROM,
-    }
-    headers = {"x-api-key": COMMHUB_API_KEY, "Content-Type": "application/json"}
-
-    try:
-        async with httpx.AsyncClient(timeout=30) as hc:
-            r = await hc.post(COMMHUB_URL, json=payload, headers=headers)
-        ok = 200 <= r.status_code < 300
-        body: Optional[dict] = None
-        try:
-            body = r.json()
-        except Exception:
-            body = {"raw": r.text[:500]}
-        await db.email_log.insert_one({
-            "id": str(uuid.uuid4()),
-            "to": req.to,
-            "subject": payload["subject"],
-            "status_code": r.status_code,
-            "ok": ok,
-            "response": body,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+    # Build compact payload for the LLM. Trim plain_text to keep payload small.
+    items = []
+    for p in req.pages:
+        items.append({
+            "id": p.id,
+            "capture_order": p.capture_order,
+            "detected_page_number": p.detected_page_number,
+            "text_excerpt": (p.plain_text or "")[:600],
         })
-        if not ok:
-            raise HTTPException(r.status_code, f"commhub error: {body}")
-        return {"ok": True, "status_code": r.status_code, "response": body}
-    except HTTPException:
-        raise
+
+    # If only one page and no detection -> just call it page 1
+    if len(items) == 1 and items[0]["detected_page_number"] is None:
+        return {"pages": [{
+            "id": items[0]["id"],
+            "page_number": 1,
+            "source": "inferred",
+            "note": "Endast en sida – numreras som 1.",
+        }]}
+
+    user_text = ORGANIZE_PROMPT + "\n\nSidor:\n" + json.dumps(items, ensure_ascii=False)
+    try:
+        if not EMERGENT_LLM_KEY:
+            raise RuntimeError("EMERGENT_LLM_KEY missing")
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"organize-{uuid.uuid4()}",
+            system_message="You output only valid JSON. No commentary.",
+        ).with_model("openai", "gpt-5.2")
+        raw = await chat.send_message(UserMessage(text=user_text))
+        data = json.loads(_strip_json(str(raw)))
+        pages = data.get("pages", [])
+        # Dedupe page_number assignments
+        used: set[int] = set()
+        out: List[dict] = []
+        for p in pages:
+            n = _to_int_or_none(p.get("page_number"))
+            if n is None or n in used:
+                # find next free positive int
+                n = max(used) + 1 if used else 1
+                while n in used:
+                    n += 1
+                p["source"] = "inferred"
+                p["note"] = (p.get("note") or "") + " (justerad för att undvika dubblett)"
+            used.add(n)
+            out.append({
+                "id": str(p.get("id", "")),
+                "page_number": n,
+                "source": p.get("source") or "inferred",
+                "note": p.get("note") or "",
+            })
+        return {"pages": out}
     except Exception as e:
-        logger.exception("email send failed")
-        raise HTTPException(500, f"email send error: {e}")
+        logger.warning(f"organize fallback: {e}")
+        # Deterministic fallback: use detected number if any, else fill gaps sequentially
+        used: set[int] = {p["detected_page_number"] for p in items if p["detected_page_number"]}
+        out_fb: List[dict] = []
+        next_free = 1
+        for it in sorted(items, key=lambda x: x["capture_order"]):
+            n = it["detected_page_number"]
+            src = "found"
+            note = ""
+            if n is None:
+                while next_free in used:
+                    next_free += 1
+                n = next_free
+                used.add(n)
+                src = "inferred"
+                note = "Inget sidnummer hittades – tilldelat automatiskt."
+                next_free += 1
+            out_fb.append({"id": it["id"], "page_number": n, "source": src, "note": note})
+        return {"pages": out_fb}
 
 
 app.include_router(api_router)

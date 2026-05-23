@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, ReactNode } from "react";
 
+export type PageSource = "found" | "inferred" | "missing";
+
 export type Scan = {
   id: string;
   imageUri: string;
@@ -9,6 +11,9 @@ export type Scan = {
   errorEstimate: number;
   coherenceScore: number;
   coherenceNote: string;
+  pageNumber: number | null;
+  pageSource: PageSource;
+  pageNote: string;
   attempts: number;
 };
 
