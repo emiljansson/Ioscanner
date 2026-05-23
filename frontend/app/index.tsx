@@ -187,7 +187,7 @@ export default function Index() {
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
         <View>
           <Text style={styles.brand}>
-            {rescanTarget ? `IMPROVE PAGE ${rescanIdx + 1}` : "JAWEL SCANNER"}
+            {rescanTarget ? `IMPROVE PAGE ${rescanIdx + 1}` : "COPYTHAT"}
           </Text>
           <Text style={styles.brandSub}>
             {rescanTarget
