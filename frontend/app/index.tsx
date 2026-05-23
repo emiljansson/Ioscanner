@@ -192,7 +192,7 @@ export default function Index() {
           <Text style={styles.brandSub}>
             {rescanTarget
               ? `Försök ${rescanTarget.attempts + 1} · ta nytt foto`
-              : "OCR · AI · Mail"}
+              : "OCR · AI · Kopiera"}
           </Text>
         </View>
         <View style={{ flexDirection: "row", gap: 8 }}>
