@@ -167,6 +167,18 @@ export default function PageDetail() {
             Estimated error: ~{Math.round(scan.errorEstimate)}% of the text may be incorrect.
           </Text>
 
+          {scan.consensusScore != null && scan.verifierCount > 0 && (
+            <View style={styles.consensusRow} testID="consensus-row">
+              <Ionicons name="git-merge-outline" size={14} color="#3F3F46" />
+              <Text style={styles.consensusText}>
+                Cross-checked with {scan.verifierLabels}:{" "}
+                <Text style={styles.consensusValue}>
+                  {Math.round(scan.consensusScore)}% match
+                </Text>
+              </Text>
+            </View>
+          )}
+
           {/* Semantic coherence sub-row */}
           <View style={styles.cohRow}>
             <View
@@ -375,6 +387,20 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   cohWarnText: { flex: 1, color: "#92400E", fontSize: 13, lineHeight: 18 },
+
+  consensusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#EFF6FF",
+    borderColor: "#BFDBFE",
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+  },
+  consensusText: { flex: 1, color: "#1E40AF", fontSize: 12, lineHeight: 17 },
+  consensusValue: { fontWeight: "800" },
 
   pageNumCard: {
     backgroundColor: "#fff",

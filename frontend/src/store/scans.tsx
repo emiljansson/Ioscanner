@@ -15,6 +15,9 @@ export type Scan = {
   pageSource: PageSource;
   pageNote: string;
   attempts: number;
+  consensusScore: number | null;
+  verifierCount: number;
+  verifierLabels: string;
 };
 
 type Ctx = {

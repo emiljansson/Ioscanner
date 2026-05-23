@@ -93,6 +93,9 @@ export default function Index() {
             data.page_source || rescanTarget.pageSource,
           pageNote: data.page_note ?? rescanTarget.pageNote,
           attempts: data.attempts || rescanTarget.attempts + 1,
+          consensusScore: data.consensus_score,
+          verifierCount: data.verifier_count,
+          verifierLabels: data.verifier_labels,
         });
         router.replace(`/page/${rescanTarget.id}`);
         return;
@@ -113,11 +116,13 @@ export default function Index() {
         pageSource: data.page_source || "missing",
         pageNote: data.page_note || "",
         attempts: data.attempts || 1,
+        consensusScore: data.consensus_score,
+        verifierCount: data.verifier_count,
+        verifierLabels: data.verifier_labels,
       };
       addScan(scan);
       router.push(`/page/${scan.id}`);
     } catch (e: any) {
-      console.error(e);
       setError(e?.message ?? "Something went wrong");
       Alert.alert(
         rescanTarget ? "Rescan failed" : "Scan failed",
@@ -186,6 +191,16 @@ export default function Index() {
             <Ionicons name={flashIcon as any} size={16} color="#fff" />
             <Text style={styles.flashPillText}>{flashLabel}</Text>
           </TouchableOpacity>
+          {!rescanTarget && (
+            <TouchableOpacity
+              style={styles.flashPill}
+              onPress={() => router.push("/settings")}
+              testID="open-settings-btn"
+              activeOpacity={0.8}
+            >
+              <Ionicons name="settings-outline" size={16} color="#fff" />
+            </TouchableOpacity>
+          )}
           {rescanTarget ? (
             <TouchableOpacity
               style={styles.cancelPill}
@@ -276,7 +291,10 @@ export default function Index() {
             <Text style={styles.busyTitle}>
               {rescanTarget ? "Improving text…" : "AI is reading…"}
             </Text>
-            <Text style={styles.busySub}>OpenAI GPT-5.2</Text>
+            <Text style={styles.busySub}>
+              {/* model label shown in busy overlay is decorative */}
+              AI vision
+            </Text>
           </View>
         </View>
       )}

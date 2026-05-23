@@ -1,13 +1,13 @@
-// On-device OpenAI client. Replaces the previous backend (/api/ocr/*).
-// Reads the API key from EXPO_PUBLIC_OPENAI_API_KEY (set in .env or
-// Expo Launch project env vars).
+// On-device AI client. Routes to whichever provider the user picked in Settings.
+// Optionally fans out to "verifier" providers in parallel for consensus scoring.
 
-const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
-const MODEL = "gpt-5.2";
-
-function getKey(): string {
-  return process.env.EXPO_PUBLIC_OPENAI_API_KEY || "";
-}
+import {
+  getActiveProvider,
+  getActiveVerifiers,
+  getApiKey,
+  providerById,
+  ProviderId,
+} from "./aiSettings";
 
 // ---------- Prompts ----------
 const OCR_PROMPT = `You are a high-quality OCR engine for English/Swedish documents.
@@ -42,6 +42,9 @@ Return STRICT JSON:
 }
 No code fences, no text outside the JSON.`;
 
+const VERIFY_PROMPT =
+  "Read the image and return ONLY the verbatim text content as plain text. No commentary, no markdown, no JSON. Preserve line breaks.";
+
 const ORGANIZE_PROMPT = `You receive a list of scanned pages in the order they were photographed. Some already have a detected page_number, others don't. Your task:
 1. Use page_number if present and plausible given the content.
 2. For pages without a detected number: guess the most likely number based on the neighbours' numbers + the text's content/context.
@@ -70,52 +73,267 @@ function uuid(): string {
   );
 }
 
+function tokenize(s: string): Set<string> {
+  return new Set(
+    (s || "")
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 1)
+  );
+}
+
+/** Token-level Jaccard similarity (0-1). Robust to OCR formatting drift. */
+function similarity(a: string, b: string): number {
+  const A = tokenize(a);
+  const B = tokenize(b);
+  if (A.size === 0 && B.size === 0) return 1;
+  if (A.size === 0 || B.size === 0) return 0;
+  let inter = 0;
+  for (const t of A) if (B.has(t)) inter++;
+  const uni = A.size + B.size - inter;
+  return uni ? inter / uni : 0;
+}
+
 function clampConfidence(
   selfConf: number,
   coherence: number,
+  consensus: number | null,
   attempts: number
 ): number {
-  // Single-model variant: blend self_confidence and coherence + per-attempt bonus
-  const base = 0.55 * (selfConf || 0) + 0.45 * (coherence || 0);
+  // With verifiers: 0.30 self + 0.25 coherence + 0.45 consensus
+  // Without verifiers: 0.55 self + 0.45 coherence
+  const base =
+    consensus != null
+      ? 0.30 * (selfConf || 0) + 0.25 * (coherence || 0) + 0.45 * consensus
+      : 0.55 * (selfConf || 0) + 0.45 * (coherence || 0);
   const bonus = Math.min(12, Math.max(0, attempts - 1) * 4);
   return Math.round(Math.min(99, base + bonus) * 10) / 10;
 }
 
-async function callOpenAI(content: any[], maxTokens = 4000): Promise<any> {
-  const key = getKey();
-  if (!key) {
-    throw new Error(
-      "OpenAI API key missing. Set EXPO_PUBLIC_OPENAI_API_KEY in your .env (local) or Expo Launch project environment variables."
-    );
-  }
-  const res = await fetch(OPENAI_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      messages: [{ role: "user", content }],
-      max_completion_tokens: maxTokens,
-    }),
-  });
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error(`OpenAI ${res.status}: ${t.slice(0, 300)}`);
-  }
-  const data = await res.json();
-  const raw: string = data?.choices?.[0]?.message?.content ?? "{}";
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs = 120000
+): Promise<Response> {
+  const attempt = async (): Promise<Response> => {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(t);
+    }
+  };
   try {
-    return JSON.parse(stripJson(raw));
-  } catch {
-    throw new Error(
-      `Could not parse OpenAI response as JSON: ${String(raw).slice(0, 200)}`
-    );
+    return await attempt();
+  } catch (e: any) {
+    // Retry once on transient network failures (typical after iPhone unlocks
+    // from sleep — radio hasn't fully reconnected yet).
+    const msg = String(e?.message ?? "");
+    const transient =
+      e?.name !== "AbortError" &&
+      (msg.includes("Network request failed") ||
+        msg.includes("Failed to fetch") ||
+        msg.includes("network") ||
+        msg.includes("ECONNRESET") ||
+        msg.includes("timeout"));
+    if (transient) {
+      await new Promise((r) => setTimeout(r, 1200));
+      try {
+        return await attempt();
+      } catch (e2: any) {
+        if (e2?.name === "AbortError") {
+          throw new Error(
+            `Request timed out after ${Math.round(timeoutMs / 1000)}s. The model may be slow or unavailable.`
+          );
+        }
+        throw new Error(
+          `Network error: ${e2?.message ?? "request failed"}. Check your connection and try again.`
+        );
+      }
+    }
+    if (e?.name === "AbortError") {
+      throw new Error(
+        `Request timed out after ${Math.round(timeoutMs / 1000)}s. The model may be slow or unavailable.`
+      );
+    }
+    throw e;
   }
 }
 
-// ---------- Types ----------
+// ---------- Provider routers (JSON output for primary) ----------
+async function callOpenAIJson(apiKey: string, prompt: string, imageBase64: string | null): Promise<any> {
+  // GPT-5.5 uses the new Responses API (/v1/responses) with input_text / input_image
+  const userContent: any[] = [{ type: "input_text", text: prompt }];
+  if (imageBase64) {
+    userContent.push({
+      type: "input_image",
+      image_url: `data:image/jpeg;base64,${imageBase64}`,
+    });
+  }
+  const res = await fetchWithTimeout("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: "gpt-5.5",
+      input: [{ role: "user", content: userContent }],
+    }),
+  });
+  if (!res.ok) throw new Error(`OpenAI ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const data = await res.json();
+  const raw: string =
+    data?.output_text ??
+    (Array.isArray(data?.output)
+      ? data.output
+          .flatMap((o: any) => o?.content || [])
+          .map((c: any) => c?.text || "")
+          .join("")
+      : "") ??
+    "{}";
+  return JSON.parse(stripJson(raw));
+}
+
+async function callGeminiJson(apiKey: string, prompt: string, imageBase64: string | null): Promise<any> {
+  const parts: any[] = [{ text: prompt }];
+  if (imageBase64) parts.push({ inline_data: { mime_type: "image/jpeg", data: imageBase64 } });
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent?key=${encodeURIComponent(
+    apiKey
+  )}`;
+  const res = await fetchWithTimeout(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts }],
+      generationConfig: { responseMimeType: "application/json" },
+    }),
+  });
+  if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const data = await res.json();
+  const raw: string = data?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || "").join("") ?? "{}";
+  return JSON.parse(stripJson(raw));
+}
+
+async function callAnthropicJson(apiKey: string, prompt: string, imageBase64: string | null): Promise<any> {
+  const content: any[] = [];
+  if (imageBase64)
+    content.push({
+      type: "image",
+      source: { type: "base64", media_type: "image/jpeg", data: imageBase64 },
+    });
+  content.push({ type: "text", text: prompt });
+  const res = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-5",
+      max_tokens: 4000,
+      messages: [{ role: "user", content }],
+    }),
+  });
+  if (!res.ok) throw new Error(`Claude ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const data = await res.json();
+  const raw: string = data?.content?.map((c: any) => c?.text || "").join("") ?? "{}";
+  return JSON.parse(stripJson(raw));
+}
+
+async function callProviderJson(id: ProviderId, apiKey: string, prompt: string, imageBase64: string | null) {
+  if (id === "openai") return callOpenAIJson(apiKey, prompt, imageBase64);
+  if (id === "gemini") return callGeminiJson(apiKey, prompt, imageBase64);
+  return callAnthropicJson(apiKey, prompt, imageBase64);
+}
+
+// ---------- Verifier: returns raw plain text ----------
+async function verifyText(id: ProviderId, apiKey: string, imageBase64: string): Promise<string> {
+  if (id === "openai") {
+    const res = await fetchWithTimeout("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: "gpt-5.5",
+        input: [
+          {
+            role: "user",
+            content: [
+              { type: "input_text", text: VERIFY_PROMPT },
+              {
+                type: "input_image",
+                image_url: `data:image/jpeg;base64,${imageBase64}`,
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    if (!res.ok) throw new Error(`verify openai ${res.status}`);
+    const data = await res.json();
+    const text =
+      data?.output_text ??
+      (Array.isArray(data?.output)
+        ? data.output
+            .flatMap((o: any) => o?.content || [])
+            .map((c: any) => c?.text || "")
+            .join("")
+        : "");
+    return String(text ?? "").trim();
+  }
+  if (id === "gemini") {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent?key=${encodeURIComponent(
+      apiKey
+    )}`;
+    const res = await fetchWithTimeout(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts: [
+              { text: VERIFY_PROMPT },
+              { inline_data: { mime_type: "image/jpeg", data: imageBase64 } },
+            ],
+          },
+        ],
+      }),
+    });
+    if (!res.ok) throw new Error(`verify gemini ${res.status}`);
+    const data = await res.json();
+    return String(data?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || "").join("") ?? "").trim();
+  }
+  // anthropic
+  const res = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-5",
+      max_tokens: 2000,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageBase64 } },
+            { type: "text", text: VERIFY_PROMPT },
+          ],
+        },
+      ],
+    }),
+  });
+  if (!res.ok) throw new Error(`verify claude ${res.status}`);
+  const data = await res.json();
+  return String(data?.content?.map((c: any) => c?.text || "").join("") ?? "").trim();
+}
+
+// ---------- Public types ----------
 export type ScanResult = {
   id: string;
   structured_text: string;
@@ -128,6 +346,12 @@ export type ScanResult = {
   page_source: "found" | "inferred" | "missing";
   page_note: string;
   attempts: number;
+  /** Average token-overlap with verifiers (0-100). null if no verifiers ran. */
+  consensus_score: number | null;
+  /** How many verifiers replied successfully. */
+  verifier_count: number;
+  /** Comma-separated provider ids that were used as verifiers. */
+  verifier_labels: string;
 };
 
 export type OrganizeInput = {
@@ -147,7 +371,10 @@ export type OrganizedPage = {
 function buildResult(
   r: any,
   attempts: number,
-  prevConf: number
+  prevConf: number,
+  consensus: number | null,
+  verifierCount: number,
+  verifierLabels: string
 ): ScanResult {
   const structured = String(r?.structured_text ?? "");
   const plain = String(r?.plain_text ?? "") || structured.replace(/\*\*/g, "");
@@ -156,14 +383,10 @@ function buildResult(
   const cohNote = String(r?.coherence_note ?? "");
   const pageRaw = r?.page_number;
   const pageNum =
-    pageRaw != null && Number.isFinite(Number(pageRaw))
-      ? Math.trunc(Number(pageRaw))
-      : null;
+    pageRaw != null && Number.isFinite(Number(pageRaw)) ? Math.trunc(Number(pageRaw)) : null;
   const pageNote = String(r?.page_note ?? "");
-  let conf = clampConfidence(selfConf, coh, attempts);
-  if (conf < prevConf) {
-    conf = Math.min(99, Math.round((prevConf + 2) * 10) / 10);
-  }
+  let conf = clampConfidence(selfConf, coh, consensus, attempts);
+  if (conf < prevConf) conf = Math.min(99, Math.round((prevConf + 2) * 10) / 10);
   const err = Math.max(0, Math.round((100 - conf) * 10) / 10);
   return {
     id: uuid(),
@@ -177,20 +400,68 @@ function buildResult(
     page_source: pageNum != null ? "found" : "missing",
     page_note: pageNote,
     attempts,
+    consensus_score: consensus != null ? Math.round(consensus * 10) / 10 : null,
+    verifier_count: verifierCount,
+    verifier_labels: verifierLabels,
+  };
+}
+
+// ---------- Primary + verifier orchestration ----------
+async function runWithConsensus(prompt: string, imageBase64: string) {
+  const primary = await getActiveProvider();
+  const primaryKey = await getApiKey(primary);
+  if (!primaryKey) {
+    throw new Error(
+      `No API key set for ${providerById(primary).label}. Open Settings and paste your key.`
+    );
+  }
+
+  // Primary call (JSON) + verifier calls (plain text) in parallel
+  const verifiers = await getActiveVerifiers();
+  const verifierKeys = await Promise.all(verifiers.map((v) => getApiKey(v)));
+
+  const primaryTask = callProviderJson(primary, primaryKey, prompt, imageBase64);
+  const verifierTasks = verifiers.map((v, i) =>
+    verifyText(v, verifierKeys[i], imageBase64).catch((e) => {
+      console.warn(`verifier ${v} failed:`, e?.message ?? e);
+      return null;
+    })
+  );
+
+  const [primaryRes, ...verifierResults] = await Promise.all([primaryTask, ...verifierTasks]);
+  const primaryPlain = String(primaryRes?.plain_text ?? "");
+  const goodTexts: string[] = [];
+  const goodLabels: string[] = [];
+  verifierResults.forEach((t, i) => {
+    if (typeof t === "string" && t.length > 0) {
+      goodTexts.push(t);
+      goodLabels.push(providerById(verifiers[i]).label);
+    }
+  });
+
+  let consensus: number | null = null;
+  if (goodTexts.length > 0 && primaryPlain) {
+    const sims = goodTexts.map((t) => similarity(primaryPlain, t));
+    const avg = sims.reduce((a, b) => a + b, 0) / sims.length;
+    consensus = avg * 100;
+  }
+
+  return {
+    primaryRes,
+    consensus,
+    verifierCount: goodTexts.length,
+    verifierLabels: goodLabels.join(", "),
   };
 }
 
 // ---------- Public API ----------
 export async function runOcrScan(imageBase64: string): Promise<ScanResult> {
   if (!imageBase64) throw new Error("image required");
-  const r = await callOpenAI([
-    { type: "text", text: OCR_PROMPT },
-    {
-      type: "image_url",
-      image_url: { url: `data:image/jpeg;base64,${imageBase64}` },
-    },
-  ]);
-  return buildResult(r, 1, 0);
+  const { primaryRes, consensus, verifierCount, verifierLabels } = await runWithConsensus(
+    OCR_PROMPT,
+    imageBase64
+  );
+  return buildResult(primaryRes, 1, 0, consensus, verifierCount, verifierLabels);
 }
 
 export async function runOcrRescan(
@@ -200,19 +471,21 @@ export async function runOcrRescan(
   attempts: number
 ): Promise<ScanResult> {
   if (!imageBase64) throw new Error("image required");
-  const r = await callOpenAI([
-    { type: "text", text: rescanPrompt(previousText) },
-    {
-      type: "image_url",
-      image_url: { url: `data:image/jpeg;base64,${imageBase64}` },
-    },
-  ]);
-  return buildResult(r, Math.max(2, attempts + 1), previousConfidence || 0);
+  const { primaryRes, consensus, verifierCount, verifierLabels } = await runWithConsensus(
+    rescanPrompt(previousText),
+    imageBase64
+  );
+  return buildResult(
+    primaryRes,
+    Math.max(2, attempts + 1),
+    previousConfidence || 0,
+    consensus,
+    verifierCount,
+    verifierLabels
+  );
 }
 
-export async function runOrganize(
-  pages: OrganizeInput[]
-): Promise<OrganizedPage[]> {
+export async function runOrganize(pages: OrganizeInput[]): Promise<OrganizedPage[]> {
   if (!pages.length) return [];
   if (pages.length === 1 && pages[0].detected_page_number == null) {
     return [
@@ -231,12 +504,15 @@ export async function runOrganize(
     text_excerpt: (p.plain_text || "").slice(0, 600),
   }));
   try {
-    const r = await callOpenAI([
-      {
-        type: "text",
-        text: ORGANIZE_PROMPT + "\n\nPages:\n" + JSON.stringify(items),
-      },
-    ]);
+    const primary = await getActiveProvider();
+    const primaryKey = await getApiKey(primary);
+    if (!primaryKey) throw new Error("no key");
+    const r = await callProviderJson(
+      primary,
+      primaryKey,
+      ORGANIZE_PROMPT + "\n\nPages:\n" + JSON.stringify(items),
+      null
+    );
     const arr: any[] = Array.isArray(r?.pages) ? r.pages : [];
     const used = new Set<number>();
     return arr.map((p) => {
@@ -255,22 +531,14 @@ export async function runOrganize(
       };
     });
   } catch {
-    // Deterministic fallback if AI fails
     const used = new Set<number>(
-      pages
-        .map((p) => p.detected_page_number)
-        .filter((n): n is number => n != null)
+      pages.map((p) => p.detected_page_number).filter((n): n is number => n != null)
     );
     const out: OrganizedPage[] = [];
     let next = 1;
     for (const p of [...pages].sort((a, b) => a.capture_order - b.capture_order)) {
       if (p.detected_page_number != null) {
-        out.push({
-          id: p.id,
-          page_number: p.detected_page_number,
-          source: "found",
-          note: "",
-        });
+        out.push({ id: p.id, page_number: p.detected_page_number, source: "found", note: "" });
       } else {
         while (used.has(next)) next++;
         used.add(next);
@@ -285,4 +553,11 @@ export async function runOrganize(
     }
     return out;
   }
+}
+
+// ---------- Test connection (used by Settings) ----------
+export async function testConnection(id: ProviderId, apiKey: string): Promise<string> {
+  const ping = 'Reply with the exact JSON: {"ok": true}';
+  const r = await callProviderJson(id, apiKey, ping, null);
+  return r?.ok ? `${providerById(id).label} ✓` : `${providerById(id).label} responded`;
 }
