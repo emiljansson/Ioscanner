@@ -13,14 +13,16 @@ import {
 const OCR_PROMPT = `You are a high-quality OCR engine for English/Swedish documents.
 Read the image and return STRICT JSON matching this schema:
 {
-  "structured_text": "<markdown. Headings as **bold** on their own line, lists as -, keep line breaks>",
-  "plain_text": "<extracted text only, no markdown>",
-  "self_confidence": <0-100 how confident you are in the visual reading>,
-  "coherence_score": <0-100 how SEMANTICALLY PLAUSIBLE the text is as a real document (linguistic coherence, sentence flow, plausible values) – NOT just whether individual words are spelled correctly>,
-  "coherence_note": "<short ENGLISH note (max 120 chars) about any coherence issues, or empty>",
-  "page_number": <integer if a page number IS VISIBLE on the page (e.g. "Page 3", "3 (4)", "-3-", footer), otherwise null>,
+  "is_document_likelihood": <0-100 how likely the image actually contains readable text from a document/paper/sign/screen. 0 = blank wall/ceiling/sky/random object with no text at all. 30 = mostly empty with a tiny incidental word. 70 = clear document but blurry/cropped. 95-100 = obvious document or sign with readable text. BE STRICT – if you cannot find real readable characters, this MUST be below 20.>,
+  "structured_text": "<markdown. Headings as **bold** on their own line, lists as -, keep line breaks. EMPTY STRING if is_document_likelihood < 20.>",
+  "plain_text": "<extracted text only, no markdown. EMPTY STRING if is_document_likelihood < 20.>",
+  "self_confidence": <0-100 how confident you are in the visual reading. If is_document_likelihood < 20, this MUST also be below 20.>,
+  "coherence_score": <0-100 how SEMANTICALLY PLAUSIBLE the text is as a real document. NOT just word spelling. If is_document_likelihood < 20, this MUST also be below 20.>,
+  "coherence_note": "<short ENGLISH note (max 120 chars) about any coherence/quality issues, or empty>",
+  "page_number": <integer if a page number IS VISIBLE (e.g. "Page 3", "3 (4)", "-3-", footer), otherwise null>,
   "page_note": "<short ENGLISH note about how the page number was found, or empty>"
 }
+NEVER invent text that isn't visible. If you see no readable text, set is_document_likelihood low and return empty strings.
 Find headings (short lines, titles, section labels) and mark them with **double asterisks**.
 Preserve the document's original language verbatim. Write nothing outside the JSON object. No code fences.`;
 
@@ -29,9 +31,10 @@ const rescanPrompt = (prev: string) => `You are a high-quality OCR engine. A pre
 ${prev.slice(0, 6000)}
 ---END---
 
-Read the new image and CORRECT the previous text. Keep correct parts, fix misspellings, add missing words/lines if visible in the image.
+Read the new image and CORRECT the previous text. Keep correct parts, fix misspellings, add missing words/lines if visible.
 Return STRICT JSON:
 {
+  "is_document_likelihood": <0-100 — same rules as above, low if the new image isn't a document>,
   "structured_text": "<markdown, headings as **bold**>",
   "plain_text": "<plain text only>",
   "self_confidence": <0-100>,
@@ -40,7 +43,7 @@ Return STRICT JSON:
   "page_number": <integer if page number visible, else null>,
   "page_note": "<short English note or empty>"
 }
-No code fences, no text outside the JSON.`;
+NEVER invent text that isn't visible. No code fences, no text outside the JSON.`;
 
 const VERIFY_PROMPT =
   "Read the image and return ONLY the verbatim text content as plain text. No commentary, no markdown, no JSON. Preserve line breaks.";
@@ -98,17 +101,26 @@ function similarity(a: string, b: string): number {
 function clampConfidence(
   selfConf: number,
   coherence: number,
+  isDocLikelihood: number,
+  textLen: number,
   consensus: number | null,
   attempts: number
 ): number {
-  // With verifiers: 0.30 self + 0.25 coherence + 0.45 consensus
-  // Without verifiers: 0.55 self + 0.45 coherence
+  // Hard guard: if the image doesn't look like a document, or there's basically
+  // no text extracted, confidence collapses to a low value.
+  if (isDocLikelihood < 20 || textLen < 8) {
+    return Math.round(Math.min(15, isDocLikelihood * 0.5 + textLen * 0.5) * 10) / 10;
+  }
   const base =
     consensus != null
       ? 0.30 * (selfConf || 0) + 0.25 * (coherence || 0) + 0.45 * consensus
       : 0.55 * (selfConf || 0) + 0.45 * (coherence || 0);
+  // Multiply by document-likelihood (normalised to 0–1) so anything questionable
+  // gets pulled toward zero rather than averaged into the 90s.
+  const docFactor = Math.min(1, Math.max(0, isDocLikelihood / 100));
+  const adjusted = base * docFactor;
   const bonus = Math.min(12, Math.max(0, attempts - 1) * 4);
-  return Math.round(Math.min(99, base + bonus) * 10) / 10;
+  return Math.round(Math.min(99, adjusted + bonus) * 10) / 10;
 }
 
 async function fetchWithTimeout(
@@ -380,12 +392,19 @@ function buildResult(
   const plain = String(r?.plain_text ?? "") || structured.replace(/\*\*/g, "");
   const selfConf = Number(r?.self_confidence ?? 60) || 0;
   const coh = Number(r?.coherence_score ?? 60) || 0;
-  const cohNote = String(r?.coherence_note ?? "");
+  const docLik = Number(r?.is_document_likelihood ?? 80) || 0;
+  let cohNote = String(r?.coherence_note ?? "");
+  // Inject a friendly note when the image clearly isn't a document so the
+  // user sees WHY confidence is rock-bottom.
+  if (docLik < 20 && !cohNote) {
+    cohNote = "No readable text detected – is this actually a document?";
+  }
   const pageRaw = r?.page_number;
   const pageNum =
     pageRaw != null && Number.isFinite(Number(pageRaw)) ? Math.trunc(Number(pageRaw)) : null;
   const pageNote = String(r?.page_note ?? "");
-  let conf = clampConfidence(selfConf, coh, consensus, attempts);
+  const textLen = plain.replace(/\s/g, "").length;
+  let conf = clampConfidence(selfConf, coh, docLik, textLen, consensus, attempts);
   if (conf < prevConf) conf = Math.min(99, Math.round((prevConf + 2) * 10) / 10);
   const err = Math.max(0, Math.round((100 - conf) * 10) / 10);
   return {
