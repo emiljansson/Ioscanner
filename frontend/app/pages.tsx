@@ -20,6 +20,45 @@ import { useScans, type Scan } from "@/src/store/scans";
 
 const BACKEND = process.env.EXPO_PUBLIC_BACKEND_URL!;
 
+function reflowForClipboard(structured: string): string {
+  // Split into blocks by blank lines (paragraphs / sections).
+  const blocks = (structured || "").split(/\r?\n\s*\r?\n+/);
+  const out: string[] = [];
+  for (const raw of blocks) {
+    const block = raw.replace(/\r/g, "");
+    const lines = block.split("\n");
+    // Heading-only block: every non-empty line is wrapped in **...**
+    const isHeadingBlock =
+      lines.filter((l) => l.trim()).every((l) => /^\s*\*\*.+\*\*\s*$/.test(l));
+    if (isHeadingBlock) {
+      // Keep each heading on its own line, strip markers.
+      const cleaned = lines
+        .map((l) => l.replace(/^\s*\*\*(.+?)\*\*\s*$/, "$1").trim())
+        .filter(Boolean)
+        .join("\n");
+      out.push(cleaned);
+      continue;
+    }
+    // Body block: join internal newlines into spaces so the reader app
+    // can wrap text however it wants. But keep an explicit heading line
+    // (if the block starts with one) on its own line.
+    const headingMatch = lines[0]?.match(/^\s*\*\*(.+?)\*\*\s*$/);
+    let bodyLines = lines;
+    let prefix = "";
+    if (headingMatch) {
+      prefix = headingMatch[1].trim() + "\n";
+      bodyLines = lines.slice(1);
+    }
+    const joined = bodyLines
+      .map((l) => l.replace(/^\s*\*\*(.+?)\*\*\s*$/, "$1"))
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    out.push((prefix + joined).trim());
+  }
+  return out.filter(Boolean).join("\n\n");
+}
+
 function confColor(c: number) {
   if (c >= 90) return "#16A34A";
   if (c >= 70) return "#D97706";
@@ -148,9 +187,7 @@ export default function PagesScreen() {
         .map(({ s, num, src }) => {
           const tag = src === "found" ? "" : " (loose)";
           const heading = `Page ${num}${tag}`;
-          const body = (s.structuredText || s.plainText)
-            .replace(/\*\*(.+?)\*\*/g, "$1")
-            .trim();
+          const body = reflowForClipboard(s.structuredText || s.plainText);
           return `${heading}\n${"-".repeat(heading.length)}\n${body}`;
         })
         .join("\n\n");
