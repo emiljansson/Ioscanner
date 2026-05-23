@@ -16,8 +16,7 @@ import * as ImageManipulator from "expo-image-manipulator";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useScans, type Scan } from "@/src/store/scans";
-
-const BACKEND = process.env.EXPO_PUBLIC_BACKEND_URL!;
+import { runOcrScan, runOcrRescan } from "@/src/lib/ai";
 
 function confColor(c: number) {
   if (c >= 90) return "#16A34A";
@@ -67,25 +66,16 @@ export default function Index() {
         { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true }
       );
       const b64 = manipulated.base64;
-      if (!b64) throw new Error("Kunde inte koda bilden");
+      if (!b64) throw new Error("Could not encode image");
 
       // 3a) RESCAN mode — improve an existing page with a new photo
       if (rescanTarget) {
-        const res = await fetch(`${BACKEND}/api/ocr/rescan`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            image_base64: b64,
-            previous_text: rescanTarget.structuredText,
-            previous_confidence: rescanTarget.confidence,
-            attempts: rescanTarget.attempts,
-          }),
-        });
-        if (!res.ok) {
-          const t = await res.text();
-          throw new Error(`OCR failed (${res.status}): ${t.slice(0, 200)}`);
-        }
-        const data = await res.json();
+        const data = await runOcrRescan(
+          b64,
+          rescanTarget.structuredText,
+          rescanTarget.confidence,
+          rescanTarget.attempts
+        );
         updateScan(rescanTarget.id, {
           imageUri: manipulated.uri,
           structuredText: data.structured_text || rescanTarget.structuredText,
@@ -109,16 +99,7 @@ export default function Index() {
       }
 
       // 3b) NEW SCAN mode
-      const res = await fetch(`${BACKEND}/api/ocr/scan`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image_base64: b64 }),
-      });
-      if (!res.ok) {
-        const t = await res.text();
-        throw new Error(`Rescan failed (${res.status}): ${t.slice(0, 200)}`);
-      }
-      const data = await res.json();
+      const data = await runOcrScan(b64);
       const scan: Scan = {
         id: data.id,
         imageUri: manipulated.uri,
@@ -293,9 +274,9 @@ export default function Index() {
           <View style={styles.busyCard}>
             <ActivityIndicator color="#3B82F6" size="large" />
             <Text style={styles.busyTitle}>
-              {rescanTarget ? "Improving text…" : "Dualhead AI is reading…"}
+              {rescanTarget ? "Improving text…" : "AI is reading…"}
             </Text>
-            <Text style={styles.busySub}>GPT-5.2 + Gemini 3.1 Pro</Text>
+            <Text style={styles.busySub}>OpenAI GPT-5.2</Text>
           </View>
         </View>
       )}

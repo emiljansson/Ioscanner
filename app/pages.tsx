@@ -17,8 +17,7 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import { useScans, type Scan } from "@/src/store/scans";
-
-const BACKEND = process.env.EXPO_PUBLIC_BACKEND_URL!;
+import { runOrganize } from "@/src/lib/ai";
 
 function reflowForClipboard(structured: string): string {
   // Split into blocks by blank lines (paragraphs / sections).
@@ -128,27 +127,20 @@ export default function PagesScreen() {
       // Ask AI to do the smart organize/numbering across all pages
       let aiMap: Record<string, { page_number: number; source: string; note: string }> = {};
       try {
-        const res = await fetch(`${BACKEND}/api/ocr/organize`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            pages: scans.map((s, i) => ({
-              id: s.id,
-              plain_text: s.plainText || s.structuredText.replace(/\*\*/g, ""),
-              detected_page_number: s.pageNumber ?? null,
-              capture_order: i,
-            })),
-          }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          for (const p of data.pages || []) {
-            aiMap[p.id] = {
-              page_number: p.page_number,
-              source: p.source,
-              note: p.note || "",
-            };
-          }
+        const out = await runOrganize(
+          scans.map((s, i) => ({
+            id: s.id,
+            plain_text: s.plainText || s.structuredText.replace(/\*\*/g, ""),
+            detected_page_number: s.pageNumber ?? null,
+            capture_order: i,
+          }))
+        );
+        for (const p of out) {
+          aiMap[p.id] = {
+            page_number: p.page_number,
+            source: p.source,
+            note: p.note || "",
+          };
         }
       } catch (e) {
         // fallback to local resolution
