@@ -63,7 +63,7 @@ export default function PagesScreen() {
           ...s,
           resolvedNumber: next,
           resolvedSource: "inferred",
-          resolvedNote: "Inget sidnummer hittades – auto-tilldelat (lös).",
+          resolvedNote: "No page number found – auto-assigned (loose).",
         });
         next++;
       }
@@ -146,8 +146,8 @@ export default function PagesScreen() {
 
       const out = list
         .map(({ s, num, src }) => {
-          const tag = src === "found" ? "" : " (lös)";
-          const heading = `Sida ${num}${tag}`;
+          const tag = src === "found" ? "" : " (loose)";
+          const heading = `Page ${num}${tag}`;
           const body = (s.structuredText || s.plainText)
             .replace(/\*\*(.+?)\*\*/g, "$1")
             .trim();
@@ -159,7 +159,7 @@ export default function PagesScreen() {
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
     } catch (e: any) {
-      Alert.alert("Kunde inte kopiera", e?.message ?? "Okänt fel");
+      Alert.alert("Couldn't copy", e?.message ?? "Unknown error");
     } finally {
       setCopying(false);
     }
@@ -167,10 +167,10 @@ export default function PagesScreen() {
 
   const handleClear = useCallback(() => {
     if (!scans.length) return;
-    Alert.alert("Rensa alla sidor?", "Detta går inte att ångra.", [
-      { text: "Avbryt", style: "cancel" },
+    Alert.alert("Clear all pages?", "This cannot be undone.", [
+      { text: "Cancel", style: "cancel" },
       {
-        text: "Rensa",
+        text: "Clear",
         style: "destructive",
         onPress: () => {
           clearAll();
@@ -197,10 +197,10 @@ export default function PagesScreen() {
           <Ionicons name="chevron-back" size={22} color="#09090B" />
         </TouchableOpacity>
         <View style={{ flex: 1, alignItems: "center" }}>
-          <Text style={styles.headerTitle}>Sidor</Text>
+          <Text style={styles.headerTitle}>Pages</Text>
           <Text style={styles.headerSub}>
-            {scans.length} totalt
-            {inferredCount ? ` · ${inferredCount} lös` : ""}
+            {scans.length} total
+            {inferredCount ? ` · ${inferredCount} loose` : ""}
           </Text>
         </View>
         <TouchableOpacity
@@ -219,7 +219,7 @@ export default function PagesScreen() {
           <TextInput
             value={query}
             onChangeText={setQuery}
-            placeholder="Sök i sidornas innehåll eller sidnummer"
+            placeholder="Search page content or page number"
             placeholderTextColor="#9CA3AF"
             style={styles.searchInput}
             autoCapitalize="none"
@@ -243,8 +243,8 @@ export default function PagesScreen() {
             <Ionicons name="document-text-outline" size={32} color="#A1A1AA" />
             <Text style={styles.emptyText}>
               {query
-                ? "Inga sidor matchar sökningen."
-                : "Inga skannade sidor än."}
+                ? "No pages match the search."
+                : "No scanned pages yet."}
             </Text>
           </View>
         )}
@@ -283,8 +283,8 @@ export default function PagesScreen() {
                         },
                       ]}
                     >
-                      Sida {p.resolvedNumber}
-                      {p.resolvedSource === "inferred" ? " · lös" : ""}
+                      Page {p.resolvedNumber}
+                      {p.resolvedSource === "inferred" ? " · loose" : ""}
                     </Text>
                   </View>
                   <View
@@ -299,7 +299,7 @@ export default function PagesScreen() {
                   </View>
                 </View>
                 <Text style={styles.snippet} numberOfLines={2}>
-                  {snippet || "(tom sida)"}
+                  {snippet || "(empty page)"}
                 </Text>
               </View>
             </TouchableOpacity>
@@ -317,7 +317,7 @@ export default function PagesScreen() {
           testID="add-page-btn"
         >
           <Ionicons name="add" size={20} color="#09090B" />
-          <Text style={styles.secondaryBtnText}>Ny sida</Text>
+          <Text style={styles.secondaryBtnText}>New page</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[
@@ -333,7 +333,7 @@ export default function PagesScreen() {
           ) : (
             <>
               <Ionicons name="copy" size={18} color="#fff" />
-              <Text style={styles.copyBtnText}>Kopiera all text</Text>
+              <Text style={styles.copyBtnText}>Copy all text</Text>
             </>
           )}
         </TouchableOpacity>
@@ -343,7 +343,7 @@ export default function PagesScreen() {
         <View style={styles.toast} pointerEvents="none">
           <View style={styles.toastInner}>
             <Ionicons name="checkmark-circle" size={22} color="#16A34A" />
-            <Text style={styles.toastText}>Kopierat!</Text>
+            <Text style={styles.toastText}>Copied!</Text>
           </View>
         </View>
       )}

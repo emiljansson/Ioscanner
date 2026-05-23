@@ -80,37 +80,37 @@ class OrganizedPage(BaseModel):
 
 # ---------- AI prompts ----------
 GPT_OCR_PROMPT = (
-    "Du är en högkvalitativ OCR-motor för svenska/engelska dokument. "
-    "Läs bilden och returnera STRIKT JSON enligt schema:\n"
+    "You are a high-quality OCR engine for English/Swedish documents. "
+    "Read the image and return STRICT JSON matching this schema:\n"
     "{\n"
-    '  "structured_text": "<markdown med rubriker som **fet text** på egen rad, listor som -, behåll radbrytningar>",\n'
-    '  "plain_text": "<endast extraherad text, ingen markdown>",\n'
-    '  "self_confidence": <0-100 hur säker du är på avläsningen visuellt>,\n'
-    '  "coherence_score": <0-100 hur SEMANTISKT RIMLIG texten är som ett verkligt dokument>,\n'
-    '  "coherence_note": "<max 120 tecken eller tomt>",\n'
-    '  "page_number": <heltal om ett sidnummer SYNS på sidan (t.ex. \\"Sida 3\\", \\"3 (4)\\", \\"-3-\\", sidfot etc.), annars null>,\n'
-    '  "page_note": "<kort svensk notering om hur sidnumret hittades, eller tomt>"\n'
+    '  "structured_text": "<markdown text. Headings as **bold** on their own line, lists as -, keep line breaks>",\n'
+    '  "plain_text": "<extracted text only, no markdown>",\n'
+    '  "self_confidence": <0-100 how confident you are in the visual reading>,\n'
+    '  "coherence_score": <0-100 how SEMANTICALLY PLAUSIBLE the text is as a real document: linguistic coherence, logical structure, sentence flow, context, plausible values – NOT just whether individual words are spelled correctly>,\n'
+    '  "coherence_note": "<short ENGLISH note (max 120 chars) about any coherence issues, or empty>",\n'
+    '  "page_number": <integer if a page number IS VISIBLE on the page (e.g. \\"Page 3\\", \\"3 (4)\\", \\"-3-\\", footer), otherwise null>,\n'
+    '  "page_note": "<short ENGLISH note about how the page number was found, or empty>"\n'
     "}\n"
-    "Hitta rubriker (kortare rader, titlar, sektioner) och markera dem med **dubbla asterisker**. "
-    "Bevara ordning. Skriv inget utanför JSON-objektet. Inga kodstaket."
+    "Find headings (short lines, titles, section labels) and mark them with **double asterisks**. "
+    "Preserve order. Write nothing outside the JSON object. No code fences."
 )
 
 GPT_RESCAN_PROMPT_TMPL = (
-    "Du är en högkvalitativ OCR-motor. En tidigare avläsning gav följande text "
-    "som kan innehålla fel:\n---FÖREGÅENDE---\n{prev}\n---SLUT---\n\n"
-    "Läs den nya bilden och KORRIGERA tidigare text. Behåll korrekta delar, "
-    "rätta felstavningar, lägg till saknade ord/rader om de syns i bilden. "
-    "Returnera STRIKT JSON:\n"
+    "You are a high-quality OCR engine. A previous reading produced the following "
+    "text which may contain errors:\n---PREVIOUS---\n{prev}\n---END---\n\n"
+    "Read the new image and CORRECT the previous text. Keep correct parts, "
+    "fix misspellings, add missing words/lines if visible in the image. "
+    "Return STRICT JSON:\n"
     "{{\n"
-    '  "structured_text": "<markdown, rubriker som **fet text**>",\n'
-    '  "plain_text": "<endast text>",\n'
+    '  "structured_text": "<markdown, headings as **bold**>",\n'
+    '  "plain_text": "<plain text only>",\n'
     '  "self_confidence": <0-100>,\n'
     '  "coherence_score": <0-100>,\n'
-    '  "coherence_note": "<max 120 tecken eller tomt>",\n'
-    '  "page_number": <heltal om sidnummer syns, annars null>,\n'
-    '  "page_note": "<kort notering eller tomt>"\n'
+    '  "coherence_note": "<English, max 120 chars or empty>",\n'
+    '  "page_number": <integer if page number visible, else null>,\n'
+    '  "page_note": "<short English note or empty>"\n'
     "}}\n"
-    "Inga kodstaket, ingen text utanför JSON."
+    "No code fences, no text outside the JSON."
 )
 
 GEMINI_VERIFY_PROMPT = (
@@ -119,18 +119,18 @@ GEMINI_VERIFY_PROMPT = (
 )
 
 ORGANIZE_PROMPT = (
-    "Du får en lista skannade sidor i den ordning de fotograferades. Vissa har redan "
-    "ett upptäckt sidnummer, andra saknar det. Din uppgift:\n"
-    "1. Använd page_number om det finns och verkar rimligt utifrån innehållet.\n"
-    "2. För sidor utan upptäckt nummer: gissa det troligaste numret utifrån grannarnas "
-    "nummer + textens innehåll/sammanhang (t.ex. fortsatt mening, samma rubrik, datumlogik).\n"
-    "3. Om det rimligaste numret är ett heltal som passar i sekvensen mellan grannarna, "
-    "använd det. Annars välj nästa lediga heltal i sekvensen.\n"
-    "4. Två sidor får ALDRIG samma slutliga nummer – välj då nästa lediga.\n"
-    "5. source ska vara \"found\" om vi behöll det redan upptäckta numret, annars \"inferred\".\n"
-    "6. note: 1 mening på svenska som motiverar valet om source=inferred, annars tom.\n\n"
-    "Returnera STRIKT JSON utan kodstaket:\n"
-    '{ "pages": [ { "id": "<samma id>", "page_number": <heltal>, "source": "found|inferred", "note": "<sv>" } ] }'
+    "You receive a list of scanned pages in the order they were photographed. "
+    "Some already have a detected page_number, others don't. Your task:\n"
+    "1. Use page_number if present and plausible given the content.\n"
+    "2. For pages without a detected number: guess the most likely number based on "
+    "the neighbours' numbers + the text's content/context.\n"
+    "3. If the most plausible integer fits in the sequence between the neighbours, "
+    "use it. Otherwise pick the next free integer in the sequence.\n"
+    "4. Two pages must NEVER share the same final number – pick the next free instead.\n"
+    "5. source must be \"found\" if we kept the already-detected number, otherwise \"inferred\".\n"
+    "6. note: one short ENGLISH sentence justifying the choice if source=inferred, empty otherwise.\n\n"
+    "Return STRICT JSON without code fences:\n"
+    '{ "pages": [ { "id": "<same id>", "page_number": <integer>, "source": "found|inferred", "note": "<en>" } ] }'
 )
 
 
@@ -328,7 +328,7 @@ async def ocr_organize(req: OrganizeRequest):
             "id": items[0]["id"],
             "page_number": 1,
             "source": "inferred",
-            "note": "Endast en sida – numreras som 1.",
+            "note": "Only one page – numbered as 1.",
         }]}
 
     user_text = ORGANIZE_PROMPT + "\n\nSidor:\n" + json.dumps(items, ensure_ascii=False)
@@ -354,7 +354,7 @@ async def ocr_organize(req: OrganizeRequest):
                 while n in used:
                     n += 1
                 p["source"] = "inferred"
-                p["note"] = (p.get("note") or "") + " (justerad för att undvika dubblett)"
+                p["note"] = (p.get("note") or "") + " (adjusted to avoid duplicate)"
             used.add(n)
             out.append({
                 "id": str(p.get("id", "")),
@@ -379,7 +379,7 @@ async def ocr_organize(req: OrganizeRequest):
                 n = next_free
                 used.add(n)
                 src = "inferred"
-                note = "Inget sidnummer hittades – tilldelat automatiskt."
+                note = "No page number found – assigned automatically."
                 next_free += 1
             out_fb.append({"id": it["id"], "page_number": n, "source": src, "note": note})
         return {"pages": out_fb}

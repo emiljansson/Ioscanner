@@ -22,9 +22,9 @@ function confColor(c: number) {
   return "#DC2626";
 }
 function confLabel(c: number) {
-  if (c >= 90) return "Hög tillförlitlighet";
-  if (c >= 70) return "Medel tillförlitlighet";
-  return "Låg tillförlitlighet";
+  if (c >= 90) return "High confidence";
+  if (c >= 70) return "Medium confidence";
+  return "Low confidence";
 }
 
 // Render markdown-ish: **bold** (treat as heading lines) and lists
@@ -87,10 +87,10 @@ export default function PageDetail() {
 
   const handleDelete = useCallback(() => {
     if (!scan) return;
-    Alert.alert("Ta bort sida?", "Detta går inte att ångra.", [
-      { text: "Avbryt", style: "cancel" },
+    Alert.alert("Delete page?", "This cannot be undone.", [
+      { text: "Cancel", style: "cancel" },
       {
-        text: "Ta bort",
+        text: "Delete",
         style: "destructive",
         onPress: () => {
           removeScan(scan.id);
@@ -103,9 +103,9 @@ export default function PageDetail() {
   if (!scan) {
     return (
       <View style={[styles.center, { paddingTop: insets.top + 20 }]}>
-        <Text style={styles.muted}>Sidan finns inte längre.</Text>
+        <Text style={styles.muted}>This page no longer exists.</Text>
         <TouchableOpacity onPress={() => router.replace("/")} style={styles.primaryBtn}>
-          <Text style={styles.primaryBtnText}>Tillbaka</Text>
+          <Text style={styles.primaryBtnText}>Back</Text>
         </TouchableOpacity>
       </View>
     );
@@ -130,9 +130,9 @@ export default function PageDetail() {
         </TouchableOpacity>
         <View style={{ flex: 1, alignItems: "center" }}>
           <Text style={styles.headerTitle}>
-            Sida {idx >= 0 ? idx + 1 : "?"} / {scans.length}
+            Page {idx >= 0 ? idx + 1 : "?"} / {scans.length}
           </Text>
-          <Text style={styles.headerSub}>Försök {scan.attempts}</Text>
+          <Text style={styles.headerSub}>Attempt {scan.attempts}</Text>
         </View>
         <TouchableOpacity
           style={styles.iconBtn}
@@ -164,7 +164,7 @@ export default function PageDetail() {
             <Text style={styles.confLabel}>{confLabel(scan.confidence)}</Text>
           </View>
           <Text style={styles.confMuted}>
-            Uppskattat fel: ~{Math.round(scan.errorEstimate)}% av texten kan vara felaktig.
+            Estimated error: ~{Math.round(scan.errorEstimate)}% of the text may be incorrect.
           </Text>
 
           {/* Semantic coherence sub-row */}
@@ -183,7 +183,7 @@ export default function PageDetail() {
               ]}
             />
             <Text style={styles.cohLabel}>
-              Innehållsrimlighet:{" "}
+              Content plausibility:{" "}
               <Text style={styles.cohValue}>
                 {Math.round(scan.coherenceScore)}%
               </Text>
@@ -195,7 +195,7 @@ export default function PageDetail() {
               <Text style={styles.cohWarnText}>
                 {scan.coherenceNote
                   ? scan.coherenceNote
-                  : "Texten verkar inte hänga ihop som ett vanligt dokument – kontrollera innehållet."}
+                  : "The text doesn't look like a coherent document – please review the content."}
               </Text>
             </View>
           )}
@@ -211,7 +211,7 @@ export default function PageDetail() {
             >
               <Ionicons name="camera-reverse" size={18} color="#DC2626" />
               <Text style={styles.rescanBtnText}>
-                Ta nytt foto (förbättra)
+                Take new photo (improve)
               </Text>
             </TouchableOpacity>
           )}
@@ -220,7 +220,7 @@ export default function PageDetail() {
         {/* OCR result */}
         <View style={styles.ocrCard}>
           <View style={styles.ocrHeader}>
-            <Text style={styles.cardTitle}>Avläst text</Text>
+            <Text style={styles.cardTitle}>Extracted text</Text>
             <TouchableOpacity
               onPress={() => {
                 if (editing) {
@@ -236,7 +236,7 @@ export default function PageDetail() {
                 size={16}
                 color="#09090B"
               />
-              <Text style={styles.editBtnText}>{editing ? "Spara" : "Redigera"}</Text>
+              <Text style={styles.editBtnText}>{editing ? "Save" : "Edit"}</Text>
             </TouchableOpacity>
           </View>
           {editing ? (
@@ -245,7 +245,7 @@ export default function PageDetail() {
               value={draft}
               onChangeText={setDraft}
               style={styles.textArea}
-              placeholder="Skriv text…"
+              placeholder="Type text…"
               placeholderTextColor="#9CA3AF"
               testID="ocr-text-input"
             />
@@ -268,14 +268,14 @@ export default function PageDetail() {
           testID="add-page-btn"
         >
           <Ionicons name="add" size={20} color="#09090B" />
-          <Text style={styles.secondaryBtnText}>Lägg till sida</Text>
+          <Text style={styles.secondaryBtnText}>Add page</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.primaryBtnRow}
           onPress={() => router.push("/pages")}
           testID="continue-btn"
         >
-          <Text style={styles.primaryBtnText}>Alla sidor</Text>
+          <Text style={styles.primaryBtnText}>All pages</Text>
           <Ionicons name="arrow-forward" size={18} color="#fff" />
         </TouchableOpacity>
       </View>

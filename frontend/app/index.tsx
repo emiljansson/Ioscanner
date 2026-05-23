@@ -41,7 +41,7 @@ export default function Index() {
   }, []);
   const flashIcon =
     flash === "on" ? "flash" : flash === "auto" ? "flash-outline" : "flash-off";
-  const flashLabel = flash === "on" ? "PÅ" : flash === "auto" ? "AUTO" : "AV";
+  const flashLabel = flash === "on" ? "ON" : flash === "auto" ? "AUTO" : "OFF";
 
   const rescanTarget = rescanId ? getScan(rescanId) : undefined;
   const rescanIdx = rescanTarget
@@ -83,7 +83,7 @@ export default function Index() {
         });
         if (!res.ok) {
           const t = await res.text();
-          throw new Error(`Rescan fel (${res.status}): ${t.slice(0, 200)}`);
+          throw new Error(`OCR failed (${res.status}): ${t.slice(0, 200)}`);
         }
         const data = await res.json();
         updateScan(rescanTarget.id, {
@@ -116,7 +116,7 @@ export default function Index() {
       });
       if (!res.ok) {
         const t = await res.text();
-        throw new Error(`OCR misslyckades (${res.status}): ${t.slice(0, 200)}`);
+        throw new Error(`Rescan failed (${res.status}): ${t.slice(0, 200)}`);
       }
       const data = await res.json();
       const scan: Scan = {
@@ -137,10 +137,10 @@ export default function Index() {
       router.push(`/page/${scan.id}`);
     } catch (e: any) {
       console.error(e);
-      setError(e?.message ?? "Något gick fel");
+      setError(e?.message ?? "Something went wrong");
       Alert.alert(
-        rescanTarget ? "Rescan misslyckades" : "Scan misslyckades",
-        e?.message ?? "Okänt fel"
+        rescanTarget ? "Rescan failed" : "Scan failed",
+        e?.message ?? "Unknown error"
       );
     } finally {
       setBusy(false);
@@ -159,16 +159,16 @@ export default function Index() {
     return (
       <View style={[styles.center, { padding: 24 }]}>
         <Ionicons name="camera-outline" size={56} color="#09090B" />
-        <Text style={styles.h1}>Kameraåtkomst krävs</Text>
+        <Text style={styles.h1}>Camera access required</Text>
         <Text style={styles.bodyMuted}>
-          Vi behöver kameran för att kunna läsa och analysera text från dokument.
+          We need your camera to read and analyse text from documents.
         </Text>
         <TouchableOpacity
           style={styles.primaryBtn}
           onPress={requestPermission}
           testID="grant-camera-btn"
         >
-          <Text style={styles.primaryBtnText}>Tillåt kamera</Text>
+          <Text style={styles.primaryBtnText}>Allow camera</Text>
         </TouchableOpacity>
       </View>
     );
@@ -187,12 +187,12 @@ export default function Index() {
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
         <View>
           <Text style={styles.brand}>
-            {rescanTarget ? `FÖRBÄTTRA SIDA ${rescanIdx + 1}` : "JAWEL SCANNER"}
+            {rescanTarget ? `IMPROVE PAGE ${rescanIdx + 1}` : "JAWEL SCANNER"}
           </Text>
           <Text style={styles.brandSub}>
             {rescanTarget
-              ? `Försök ${rescanTarget.attempts + 1} · ta nytt foto`
-              : "OCR · AI · Kopiera"}
+              ? `Attempt ${rescanTarget.attempts + 1} · take new photo`
+              : "OCR · AI · Copy"}
           </Text>
         </View>
         <View style={{ flexDirection: "row", gap: 8 }}>
@@ -211,7 +211,7 @@ export default function Index() {
               onPress={() => router.replace(`/page/${rescanTarget.id}`)}
               testID="cancel-rescan-btn"
             >
-              <Text style={styles.cancelPillText}>Avbryt</Text>
+              <Text style={styles.cancelPillText}>Cancel</Text>
             </TouchableOpacity>
           ) : null}
         </View>
@@ -220,7 +220,7 @@ export default function Index() {
       {/* Frame overlay */}
       <View pointerEvents="none" style={styles.frameWrap}>
         <View style={styles.frame} />
-        <Text style={styles.frameHint}>Rikta kameran mot dokumentet</Text>
+        <Text style={styles.frameHint}>Point the camera at the document</Text>
       </View>
 
       {/* Bottom controls */}
@@ -255,7 +255,7 @@ export default function Index() {
           ) : (
             <>
               <Ionicons name="document-outline" size={20} color="#fff" />
-              <Text style={styles.pillCount}>0 sidor</Text>
+              <Text style={styles.pillCount}>0 pages</Text>
             </>
           )}
         </TouchableOpacity>
@@ -284,7 +284,7 @@ export default function Index() {
           testID="open-pages-btn"
         >
           <Ionicons name="copy-outline" size={20} color="#fff" />
-          <Text style={styles.mailBtnText}>Sidor</Text>
+          <Text style={styles.mailBtnText}>Pages</Text>
         </TouchableOpacity>
       </View>
 
@@ -293,7 +293,7 @@ export default function Index() {
           <View style={styles.busyCard}>
             <ActivityIndicator color="#3B82F6" size="large" />
             <Text style={styles.busyTitle}>
-              {rescanTarget ? "Förbättrar text…" : "Dualhead AI läser…"}
+              {rescanTarget ? "Improving text…" : "Dualhead AI is reading…"}
             </Text>
             <Text style={styles.busySub}>GPT-5.2 + Gemini 3.1 Pro</Text>
           </View>
