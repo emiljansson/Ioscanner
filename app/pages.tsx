@@ -186,7 +186,27 @@ export default function PagesScreen() {
 
       await Clipboard.setStringAsync(out);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
+      setTimeout(() => {
+        setCopied(false);
+        Alert.alert(
+          "Text copied!",
+          "Start a new scan session, or keep these pages to add more?",
+          [
+            {
+              text: "Keep pages",
+              style: "cancel",
+            },
+            {
+              text: "Start new",
+              style: "destructive",
+              onPress: () => {
+                clearAll();
+                router.replace("/");
+              },
+            },
+          ]
+        );
+      }, 900);
     } catch (e: any) {
       Alert.alert("Couldn't copy", e?.message ?? "Unknown error");
     } finally {
