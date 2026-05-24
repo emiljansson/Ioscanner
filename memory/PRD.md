@@ -1,68 +1,92 @@
-# Jawel Scanner — PRD
+# CopyThat — PRD
 
 ## Overview
-Swedish iOS-first OCR scanner app. Takes photos of documents, runs dualhead AI OCR
-(GPT-5.2 + Gemini 3.1 Pro in parallel), structures the text per page with bold
-headers, surfaces a confidence percentage with a rescan-to-improve loop, and
-emails the combined result to fixed recipients through commhub.cloud.
+Standalone iOS-first OCR scanner app. Takes photos of documents, runs AI OCR
+directly from the device (no backend), structures text per page with bold
+headings, surfaces a confidence percentage with rescan-to-improve loop,
+auto-paginates the scan set, and lets the user copy all text to the clipboard.
+
+Users bring their own AI API keys (OpenAI, Google Gemini, or Anthropic Claude),
+entered in an in-app Settings screen and stored locally in iOS Keychain /
+Android Keystore. No backend, no remote storage, no email sending.
 
 ## Tech Stack
 - Frontend: Expo SDK 54 + React Native + expo-router (file-based)
-- Backend: FastAPI (single `server.py`) + MongoDB (motor)
-- AI: `emergentintegrations.llm.chat` with EMERGENT_LLM_KEY
-  - GPT-5.2 (`openai/gpt-5.2`) — primary OCR, returns JSON with `structured_text`
-    (markdown with `**bold**` for headers), `plain_text`, `self_confidence`.
-  - Gemini 3.1 Pro Preview (`gemini/gemini-3.1-pro-preview`) — verifier, returns
-    verbatim plain text. Used to compute similarity-based confidence.
-- Email: commhub.cloud `POST /api/email/send` (x-api-key + app_id)
+- Backend: **None.** App is 100% standalone frontend.
+- AI: direct HTTPS fetch from the device to each provider's REST endpoint
+  - OpenAI GPT-5.5 — `POST https://api.openai.com/v1/responses`
+  - Google Gemini 3.1 Pro Preview — `POST https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent`
+  - Anthropic Claude Sonnet 4.5 — `POST https://api.anthropic.com/v1/messages`
+    (uses `anthropic-dangerous-direct-browser-access: true` header for RN)
+- State: React Context (`ScansProvider`) — in-memory only
 
-## Backend Endpoints
-- `GET /api/health` → `{ok, llm_key, commhub}`
-- `POST /api/ocr/scan` body `{image_base64}` → `ScanResult`
-- `POST /api/ocr/rescan` body `{image_base64, previous_text, previous_confidence, attempts}` → `ScanResult`
-  - Always increments `attempts`; enforces `confidence >= previous_confidence`.
-- `POST /api/email/send` body `{to[], subject, body_markdown}` → `{ok, status_code, response}`
-  - Markdown `**bold**` is converted to `<strong>` for the HTML body; plain text body
-    is `**` stripped.
+## Settings & API Keys
+- Three independent provider cards (OpenAI / Gemini / Anthropic)
+- Tapping a card sets it as the **primary** (active) provider used for OCR
+- Each card has a "Use for verification" checkbox that enables it as a
+  verifier in **Consensus Mode** (see below)
+- Keys are stored via `expo-secure-store` (Keychain on iOS, EncryptedSharedPrefs on Android)
+- "Test" button pings the provider with a tiny prompt to validate the key
+- "Get key from …" opens the provider's console URL
 
-### Confidence formula
-`confidence = 0.45 * similarity(gpt_plain, gemini_plain)*100 + 0.25 * gpt_self_confidence + 0.30 * coherence_score`
-plus a `+4` per re-attempt bonus capped at `+12`, hard-capped at 99. Re-attempts
-are guaranteed to be `>= previous_confidence`.
-
-`coherence_score` is asked from GPT-5.2 separately: it grades how semantically
-plausible the text is as a real document (logical flow, sentence structure,
-plausible values) — **not** whether individual words are spelled correctly.
-This catches "all valid Swedish words but in random order" cases.
-
-`coherence_note` (≤120 chars) is shown to the user as a yellow warning banner
-when `coherence_score < 70`.
+## Consensus Mode (korsverifiering)
+When the user enables "Use for verification" on one or more non-primary
+providers, every OCR scan fans out in parallel:
+- Primary call returns full JSON (structured + plain text + self-confidence)
+- Each verifier returns plain text only
+- We compute token-Jaccard `similarity(primary.plain_text, verifier.plain_text)`
+  for each verifier, average them → `consensus_score` (0–100)
+- Final confidence formula:
+  ```
+  base = 0.30 * self_confidence + 0.25 * coherence_score + 0.45 * consensus_score
+  confidence = clamp(base * (is_document_likelihood/100) + bonus_per_attempt, 0, 99)
+  ```
+  If no verifiers enabled: `base = 0.55 * self_confidence + 0.45 * coherence_score`
+- Hard guard: if `is_document_likelihood < 20` or extracted text < 8 chars,
+  confidence collapses to ≤15 (prevents "ceiling looks great" scores)
 
 ## Frontend Screens (`/app/frontend/app`)
 - `_layout.tsx` — Stack + `ScansProvider` (in-memory store)
-- `index.tsx` — camera with overlay frame, capture shutter, scanned-pages pill,
-  mail button. Shows "Dualhead AI läser…" overlay while scanning.
-- `page/[id].tsx` — per-page detail with image, confidence badge (color-coded),
-  bolded headings rendering, edit toggle, rescan button when confidence < 90%.
-- `email.tsx` — subject input, 2×2 grid of 4 fixed recipients
-  (Emil/Louise/Anton/William @jawel.se), pages summary with confidence chips,
-  send button. Toast on success then returns to camera.
+- `index.tsx` — camera with overlay frame, shutter, scanned-pages pill,
+  Pages button, Settings shortcut, flash auto/on/off cycle
+- `pages.tsx` — list of all scans, auto-organised by detected/inferred page
+  number, "Copy all text" button (uses `expo-clipboard`)
+- `page/[id].tsx` — per-page detail with image, confidence badge (colour-coded),
+  bolded headings, edit toggle, rescan button when confidence < 90%,
+  shows consensus score / verifier names if any ran
+- `settings.tsx` — three provider cards, key input + visibility toggle,
+  Save / Test, "Use for verification" checkbox, links to provider consoles
+
+## Smart Pagination (`runOrganize`)
+Pages without a detected `page_number` get an inferred one based on neighbours'
+numbers and text context. Two pages may never share the same final number —
+collisions fall through to the next free integer. Fallback (if AI call fails):
+sequential fill of gaps in capture order.
 
 ## Permissions
 - iOS `NSCameraUsageDescription` set in `app.json`
 - Android `CAMERA` permission set
 - `expo-camera` plugin configured
 
-## Env Vars (`/app/backend/.env`)
-- `MONGO_URL`, `DB_NAME`
-- `EMERGENT_LLM_KEY`
-- `COMMHUB_API_KEY`, `COMMHUB_APP_ID`, `COMMHUB_FROM=Ioscanner@grindstugatan.se`
+## Env Vars
+- **None required.** All credentials are user-provided via Settings.
+- `/app/backend/.env` is unused by the app at runtime (legacy file).
 
 ## Storage
-- MongoDB collections: `scans`, `email_log`. UUID `id` field; `_id` is never
-  returned to clients.
+- `expo-secure-store`: each provider's API key + active provider + verifier flags
+- React Context (in-memory): scans array (resets on app reload)
+- No remote database, no MongoDB, no FastAPI.
+
+## Build & Deploy
+- Expo configuration is duplicated at both `/app/app.json`+`/app/eas.json` and
+  `/app/frontend/app.json`+`/app/frontend/eas.json` to support EAS builds from
+  the GitHub repo root via launch.expo.dev.
+- App name: **CopyThat** with vintage duplicator icon at `/app/frontend/assets/images/`.
 
 ## Known Limitations
 - Camera does not work in the web preview tunnel (browser blocks getUserMedia
-  on the iframe). Real camera capture requires the Expo Go iOS app or a build.
-- Multi-page state is in-memory only — refreshing clears the session.
+  on the iframe). Real camera capture requires Expo Go iOS app or a native build.
+- Multi-page state is in-memory only — reloading the app clears the session.
+- Anthropic's CORS / browser policy requires the
+  `anthropic-dangerous-direct-browser-access` header; this is fine on RN native
+  but may be flagged in some web environments.
