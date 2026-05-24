@@ -26,6 +26,17 @@ function confLabel(c: number) {
   if (c >= 70) return "Medium confidence";
   return "Low confidence";
 }
+function consensusColor(c: number) {
+  if (c >= 85) return "#16A34A";
+  if (c >= 65) return "#D97706";
+  return "#DC2626";
+}
+function consensusLabel(c: number) {
+  if (c >= 95) return "Perfect match";
+  if (c >= 85) return "Strong match";
+  if (c >= 65) return "Partial match";
+  return "Weak match";
+}
 
 // Render markdown-ish: **bold** (treat as heading lines) and lists
 function StructuredText({ text }: { text: string }) {
@@ -149,6 +160,53 @@ export default function PageDetail() {
       >
         <Image source={{ uri: scan.imageUri }} style={styles.docPreview} />
 
+        {/* Consensus verification block — shown only when at least one verifier responded */}
+        {scan.consensusScore != null && scan.verifierCount > 0 && (
+          <View
+            style={[
+              styles.verifyCard,
+              { borderColor: consensusColor(scan.consensusScore) },
+            ]}
+            testID="consensus-card"
+          >
+            <View style={styles.verifyHead}>
+              <View
+                style={[
+                  styles.verifyIcon,
+                  { backgroundColor: consensusColor(scan.consensusScore) },
+                ]}
+              >
+                <Ionicons name="shield-checkmark" size={18} color="#fff" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.verifyTitle}>
+                  Verified by {scan.verifierLabels}
+                </Text>
+                <Text style={styles.verifySub}>
+                  {consensusLabel(scan.consensusScore)} ·{" "}
+                  {scan.verifierCount} verifier
+                  {scan.verifierCount === 1 ? "" : "s"} cross-checked
+                </Text>
+              </View>
+              <View
+                style={[
+                  styles.verifyPct,
+                  { backgroundColor: consensusColor(scan.consensusScore) + "20" },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.verifyPctText,
+                    { color: consensusColor(scan.consensusScore) },
+                  ]}
+                >
+                  {Math.round(scan.consensusScore)}%
+                </Text>
+              </View>
+            </View>
+          </View>
+        )}
+
         {/* Confidence card */}
         <View style={styles.confCard}>
           <View style={styles.confRow}>
@@ -166,18 +224,6 @@ export default function PageDetail() {
           <Text style={styles.confMuted}>
             Estimated error: ~{Math.round(scan.errorEstimate)}% of the text may be incorrect.
           </Text>
-
-          {scan.consensusScore != null && scan.verifierCount > 0 && (
-            <View style={styles.consensusRow} testID="consensus-row">
-              <Ionicons name="git-merge-outline" size={14} color="#3F3F46" />
-              <Text style={styles.consensusText}>
-                Cross-checked with {scan.verifierLabels}:{" "}
-                <Text style={styles.consensusValue}>
-                  {Math.round(scan.consensusScore)}% match
-                </Text>
-              </Text>
-            </View>
-          )}
 
           {/* Semantic coherence sub-row */}
           <View style={styles.cohRow}>
@@ -401,6 +447,46 @@ const styles = StyleSheet.create({
   },
   consensusText: { flex: 1, color: "#1E40AF", fontSize: 12, lineHeight: 17 },
   consensusValue: { fontWeight: "800" },
+
+  verifyCard: {
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    padding: 14,
+    borderWidth: 2,
+  },
+  verifyHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  verifyIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  verifyTitle: {
+    fontWeight: "900",
+    fontSize: 14,
+    color: "#09090B",
+    letterSpacing: 0.2,
+  },
+  verifySub: {
+    color: "#52525B",
+    fontSize: 12,
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  verifyPct: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  verifyPctText: {
+    fontWeight: "900",
+    fontSize: 16,
+  },
 
   pageNumCard: {
     backgroundColor: "#fff",

@@ -74,7 +74,12 @@ sequential fill of gaps in capture order.
 
 ## Storage
 - `expo-secure-store`: each provider's API key + active provider + verifier flags
-- React Context (in-memory): scans array (resets on app reload)
+- `@react-native-async-storage/async-storage`: persisted scans array (key
+  `copythat.scans.v1`). Hydrated on `ScansProvider` mount.
+- `expo-file-system` legacy API: captured images are copied from the camera
+  cache to `${documentDirectory}scans/<scanId>.<ext>` so they survive app
+  restarts. Images are deleted when the corresponding scan is removed or
+  rescanned.
 - No remote database, no MongoDB, no FastAPI.
 
 ## Build & Deploy
@@ -86,7 +91,6 @@ sequential fill of gaps in capture order.
 ## Known Limitations
 - Camera does not work in the web preview tunnel (browser blocks getUserMedia
   on the iframe). Real camera capture requires Expo Go iOS app or a native build.
-- Multi-page state is in-memory only — reloading the app clears the session.
 - Anthropic's CORS / browser policy requires the
   `anthropic-dangerous-direct-browser-access` header; this is fine on RN native
   but may be flagged in some web environments.

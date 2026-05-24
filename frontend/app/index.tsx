@@ -76,7 +76,7 @@ export default function Index() {
           rescanTarget.confidence,
           rescanTarget.attempts
         );
-        updateScan(rescanTarget.id, {
+        await updateScan(rescanTarget.id, {
           imageUri: manipulated.uri,
           structuredText: data.structured_text || rescanTarget.structuredText,
           plainText: data.plain_text || rescanTarget.plainText,
@@ -120,7 +120,7 @@ export default function Index() {
         verifierCount: data.verifier_count,
         verifierLabels: data.verifier_labels,
       };
-      addScan(scan);
+      await addScan(scan);
       router.push(`/page/${scan.id}`);
     } catch (e: any) {
       setError(e?.message ?? "Something went wrong");
