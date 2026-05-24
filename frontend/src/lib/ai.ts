@@ -12,6 +12,8 @@ import { recordDuration } from "./scanStats";
 // Pure-JS module — see confidence.js for the formula + tests.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { scoreConfidence, consensusCurve } = require("./confidence");
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { cleanupOcrText, plainFromCleaned } = require("./textCleanup");
 
 // ---------- Progress events ----------
 export type ScanStage =
@@ -413,8 +415,16 @@ function buildResult(
   verifierCount: number,
   verifierLabels: string
 ): ScanResult {
-  const structured = String(r?.structured_text ?? "");
-  const plain = String(r?.plain_text ?? "") || structured.replace(/\*\*/g, "");
+  const rawStructured = String(r?.structured_text ?? "");
+  const rawPlain =
+    String(r?.plain_text ?? "") || rawStructured.replace(/\*\*/g, "");
+
+  // Post-OCR cleanup: rejoin hyphenated word-breaks, detect headings,
+  // reflow paragraphs so the text fills an A4 page naturally when pasted
+  // into Word. The cleanup is purely structural — it never invents text.
+  const structured = cleanupOcrText(rawStructured || rawPlain);
+  const plain = plainFromCleaned(structured) || rawPlain;
+
   const selfConf = Number(r?.self_confidence ?? 60) || 0;
   const coh = Number(r?.coherence_score ?? 60) || 0;
   const docLik = Number(r?.is_document_likelihood ?? 80) || 0;

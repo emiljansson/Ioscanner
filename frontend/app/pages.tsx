@@ -19,43 +19,22 @@ import * as Clipboard from "expo-clipboard";
 import { useScans, type Scan } from "@/src/store/scans";
 import { runOrganize } from "@/src/lib/ai";
 
+// The OCR text is already cleaned by textCleanup in ai.ts: hyphen rejoins,
+// heading detection and paragraph reflow have all happened. For the clipboard
+// we just need to strip the `**...**` markdown markers so the output is plain
+// text that Word/Notes/etc. can wrap to A4 width naturally.
 function reflowForClipboard(structured: string): string {
-  // Split into blocks by blank lines (paragraphs / sections).
-  const blocks = (structured || "").split(/\r?\n\s*\r?\n+/);
-  const out: string[] = [];
-  for (const raw of blocks) {
-    const block = raw.replace(/\r/g, "");
-    const lines = block.split("\n");
-    // Heading-only block: every non-empty line is wrapped in **...**
-    const isHeadingBlock =
-      lines.filter((l) => l.trim()).every((l) => /^\s*\*\*.+\*\*\s*$/.test(l));
-    if (isHeadingBlock) {
-      // Keep each heading on its own line, strip markers.
-      const cleaned = lines
-        .map((l) => l.replace(/^\s*\*\*(.+?)\*\*\s*$/, "$1").trim())
-        .filter(Boolean)
-        .join("\n");
-      out.push(cleaned);
-      continue;
-    }
-    // Body block: join internal newlines into spaces so the reader app
-    // can wrap text however it wants. But keep an explicit heading line
-    // (if the block starts with one) on its own line.
-    const headingMatch = lines[0]?.match(/^\s*\*\*(.+?)\*\*\s*$/);
-    let bodyLines = lines;
-    let prefix = "";
-    if (headingMatch) {
-      prefix = headingMatch[1].trim() + "\n";
-      bodyLines = lines.slice(1);
-    }
-    const joined = bodyLines
-      .map((l) => l.replace(/^\s*\*\*(.+?)\*\*\s*$/, "$1"))
-      .join(" ")
-      .replace(/\s+/g, " ")
-      .trim();
-    out.push((prefix + joined).trim());
-  }
-  return out.filter(Boolean).join("\n\n");
+  if (!structured) return "";
+  return (
+    structured
+      // Headings on their own line: strip the asterisks.
+      .replace(/^[ \t]*\*\*(.+?)\*\*[ \t]*$/gm, "$1")
+      // Inline bold inside body lines: strip too.
+      .replace(/\*\*(.+?)\*\*/g, "$1")
+      // Normalise any accidental triple+ blank lines.
+      .replace(/\n{3,}/g, "\n\n")
+      .trim()
+  );
 }
 
 function confColor(c: number) {
