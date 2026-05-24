@@ -9,6 +9,9 @@ import {
   ProviderId,
 } from "./aiSettings";
 import { recordDuration } from "./scanStats";
+// Pure-JS module — see confidence.js for the formula + tests.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { scoreConfidence, consensusCurve } = require("./confidence");
 
 // ---------- Progress events ----------
 export type ScanStage =
@@ -130,22 +133,20 @@ function clampConfidence(
   consensus: number | null,
   attempts: number
 ): number {
-  // Hard guard: if the image doesn't look like a document, or there's basically
-  // no text extracted, confidence collapses to a low value.
-  if (isDocLikelihood < 20 || textLen < 8) {
-    return Math.round(Math.min(15, isDocLikelihood * 0.5 + textLen * 0.5) * 10) / 10;
-  }
-  const base =
-    consensus != null
-      ? 0.30 * (selfConf || 0) + 0.25 * (coherence || 0) + 0.45 * consensus
-      : 0.55 * (selfConf || 0) + 0.45 * (coherence || 0);
-  // Multiply by document-likelihood (normalised to 0–1) so anything questionable
-  // gets pulled toward zero rather than averaged into the 90s.
-  const docFactor = Math.min(1, Math.max(0, isDocLikelihood / 100));
-  const adjusted = base * docFactor;
-  const bonus = Math.min(12, Math.max(0, attempts - 1) * 4);
-  return Math.round(Math.min(99, adjusted + bonus) * 10) / 10;
+  // DEPRECATED — kept only so existing imports don't break. The actual math
+  // now lives in confidence.js (see scoreConfidence). Will be removed in a
+  // follow-up cleanup.
+  return scoreConfidence({
+    selfConf,
+    coherence,
+    docLikelihood: isDocLikelihood,
+    textLen,
+    consensus,
+    attempts,
+  });
 }
+// Suppress unused-variable warning while we keep the shim around.
+void clampConfidence;
 
 async function fetchWithTimeout(
   url: string,
@@ -408,7 +409,7 @@ function buildResult(
   r: any,
   attempts: number,
   prevConf: number,
-  consensus: number | null,
+  consensusRaw: number | null, // raw 0-100 Jaccard*100 from runWithConsensus
   verifierCount: number,
   verifierLabels: string
 ): ScanResult {
@@ -428,8 +429,21 @@ function buildResult(
     pageRaw != null && Number.isFinite(Number(pageRaw)) ? Math.trunc(Number(pageRaw)) : null;
   const pageNote = String(r?.page_note ?? "");
   const textLen = plain.replace(/\s/g, "").length;
-  let conf = clampConfidence(selfConf, coh, docLik, textLen, consensus, attempts);
-  if (conf < prevConf) conf = Math.min(99, Math.round((prevConf + 2) * 10) / 10);
+
+  // Run raw Jaccard*100 through the consensus curve so 0.85 → ~90 instead
+  // of literally 85. This matches what we DISPLAY too (see below).
+  const consensusCurved =
+    consensusRaw == null ? null : consensusCurve(consensusRaw / 100);
+
+  const conf = scoreConfidence({
+    selfConf,
+    coherence: coh,
+    docLikelihood: docLik,
+    textLen,
+    consensus: consensusCurved,
+    attempts,
+    prevConfidence: prevConf,
+  });
   const err = Math.max(0, Math.round((100 - conf) * 10) / 10);
   return {
     id: uuid(),
@@ -443,7 +457,10 @@ function buildResult(
     page_source: pageNum != null ? "found" : "missing",
     page_note: pageNote,
     attempts,
-    consensus_score: consensus != null ? Math.round(consensus * 10) / 10 : null,
+    // Display the CURVED consensus (90, not 85) so what the user reads
+    // matches what fed into the final score.
+    consensus_score:
+      consensusCurved != null ? Math.round(consensusCurved * 10) / 10 : null,
     verifier_count: verifierCount,
     verifier_labels: verifierLabels,
   };
