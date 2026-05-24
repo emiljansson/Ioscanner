@@ -1,14 +1,15 @@
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  ScrollView,
   ActivityIndicator,
   Alert,
   Platform,
   Image,
+  Animated,
+  Easing,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions } from "expo-camera";
@@ -16,12 +17,160 @@ import * as ImageManipulator from "expo-image-manipulator";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useScans, type Scan } from "@/src/store/scans";
-import { runOcrScan, runOcrRescan } from "@/src/lib/ai";
+import {
+  runOcrScan,
+  runOcrRescan,
+  type ScanProgressEvent,
+  type ScanStage,
+  type ScanProgressFn,
+} from "@/src/lib/ai";
+import { getEta } from "@/src/lib/scanStats";
+import { type ProviderId } from "@/src/lib/aiSettings";
 
 function confColor(c: number) {
   if (c >= 90) return "#16A34A";
   if (c >= 70) return "#D97706";
   return "#DC2626";
+}
+
+type VerifierChip = {
+  id: ProviderId;
+  label: string;
+  status: "pending" | "ok" | "fail";
+};
+
+type ProgressState = {
+  stageLabel: string;
+  stage: ScanStage | "compress";
+  verifiers: VerifierChip[];
+  startedAt: number;
+};
+
+function formatSeconds(s: number): string {
+  if (!isFinite(s) || s < 0) return "0s";
+  if (s < 60) return `${Math.floor(s)}s`;
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}m ${sec}s`;
+}
+
+function SmartProgressOverlay({
+  progress,
+  etaSeconds,
+  etaSamples,
+}: {
+  progress: ProgressState;
+  etaSeconds: number;
+  etaSamples: number;
+}) {
+  // Tick the elapsed timer every 250ms.
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => {
+      setElapsed((Date.now() - progress.startedAt) / 1000);
+    }, 250);
+    return () => clearInterval(id);
+  }, [progress.startedAt]);
+
+  // Animate progress bar toward ETA, but never beyond 95% until the call
+  // actually finishes (component unmounts).
+  const widthAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const eta = Math.max(etaSeconds, 4);
+    // Target = elapsed / eta (capped at 0.95) so the bar slows down as it
+    // approaches the prediction; it'll never look "stuck at 100%".
+    const target = Math.min(0.95, elapsed / eta);
+    Animated.timing(widthAnim, {
+      toValue: target,
+      duration: 280,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [elapsed, etaSeconds, widthAnim]);
+
+  const remaining = Math.max(0, etaSeconds - elapsed);
+  const overtime = elapsed > etaSeconds + 2;
+
+  return (
+    <View style={overlay.root} pointerEvents="none">
+      <View style={overlay.card}>
+        {/* Stage label + spinner */}
+        <View style={overlay.row}>
+          <ActivityIndicator color="#3B82F6" />
+          <View style={{ flex: 1 }}>
+            <Text style={overlay.stageLabel} numberOfLines={2}>
+              {progress.stageLabel}
+            </Text>
+            <Text style={overlay.timer}>
+              {formatSeconds(elapsed)} elapsed
+              {!overtime && remaining > 0
+                ? ` · ~${formatSeconds(remaining)} left`
+                : overtime
+                ? " · taking longer than usual"
+                : ""}
+            </Text>
+          </View>
+        </View>
+
+        {/* Progress bar */}
+        <View style={overlay.barTrack}>
+          <Animated.View
+            style={[
+              overlay.barFill,
+              {
+                width: widthAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: ["0%", "100%"],
+                }),
+                backgroundColor: overtime ? "#D97706" : "#3B82F6",
+              },
+            ]}
+          />
+        </View>
+
+        {/* Verifier chips (only when consensus mode is on) */}
+        {progress.verifiers.length > 0 && (
+          <View style={overlay.chipsRow}>
+            <Text style={overlay.chipsLabel}>Cross-check</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, flex: 1 }}>
+              {progress.verifiers.map((v) => {
+                const c =
+                  v.status === "ok"
+                    ? "#16A34A"
+                    : v.status === "fail"
+                    ? "#DC2626"
+                    : "#71717A";
+                const icon =
+                  v.status === "ok"
+                    ? "checkmark-circle"
+                    : v.status === "fail"
+                    ? "close-circle"
+                    : "ellipse-outline";
+                return (
+                  <View
+                    key={v.id}
+                    style={[
+                      overlay.chip,
+                      { borderColor: c + "55", backgroundColor: c + "12" },
+                    ]}
+                  >
+                    <Ionicons name={icon as any} size={12} color={c} />
+                    <Text style={[overlay.chipText, { color: c }]}>{v.label}</Text>
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        )}
+
+        <Text style={overlay.help}>
+          {etaSamples > 0
+            ? `Estimate based on your last ${etaSamples} scan${etaSamples === 1 ? "" : "s"}.`
+            : "First scan — estimate will improve over time."}
+        </Text>
+      </View>
+    </View>
+  );
 }
 
 export default function Index() {
@@ -32,6 +181,9 @@ export default function Index() {
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<ProgressState | null>(null);
+  const [etaSeconds, setEtaSeconds] = useState(18);
+  const [etaSamples, setEtaSamples] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<"off" | "auto" | "on">("auto");
 
@@ -47,17 +199,61 @@ export default function Index() {
     ? scans.findIndex((s) => s.id === rescanTarget.id)
     : -1;
 
+  // Refresh ETA prediction when the screen mounts and after every scan.
+  const refreshEta = useCallback(async () => {
+    try {
+      const info = await getEta();
+      setEtaSeconds(info.seconds);
+      setEtaSamples(info.samples);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  useEffect(() => {
+    refreshEta();
+  }, [refreshEta]);
+
+  const handleProgress: ScanProgressFn = useCallback((e: ScanProgressEvent) => {
+    setProgress((prev) => {
+      if (!prev) return prev;
+      if (e.kind === "stage") {
+        return { ...prev, stage: e.stage, stageLabel: e.label };
+      }
+      // verifier event – upsert by providerId
+      const existing = prev.verifiers.findIndex((v) => v.id === e.providerId);
+      const next = [...prev.verifiers];
+      if (existing >= 0) {
+        next[existing] = { id: e.providerId, label: e.label, status: e.status };
+      } else {
+        next.push({ id: e.providerId, label: e.label, status: e.status });
+      }
+      return { ...prev, verifiers: next };
+    });
+  }, []);
+
   const handleCapture = useCallback(async () => {
     if (!cameraRef.current || busy) return;
     setError(null);
     setBusy(true);
+    // Initial progress state – set BEFORE the camera shutter so the user
+    // sees feedback immediately.
+    setProgress({
+      stage: "compress",
+      stageLabel: "Capturing photo…",
+      verifiers: [],
+      startedAt: Date.now(),
+    });
     try {
       // 1) take photo
       const photo = await cameraRef.current.takePictureAsync({
         quality: 0.85,
         skipProcessing: true,
       });
-      if (!photo?.uri) throw new Error("Ingen bild togs");
+      if (!photo?.uri) throw new Error("No image captured");
+
+      setProgress((p) =>
+        p ? { ...p, stage: "compress", stageLabel: "Compressing image…" } : p
+      );
 
       // 2) downscale + jpeg to keep payload small
       const manipulated = await ImageManipulator.manipulateAsync(
@@ -74,7 +270,8 @@ export default function Index() {
           b64,
           rescanTarget.structuredText,
           rescanTarget.confidence,
-          rescanTarget.attempts
+          rescanTarget.attempts,
+          handleProgress
         );
         await updateScan(rescanTarget.id, {
           imageUri: manipulated.uri,
@@ -97,12 +294,13 @@ export default function Index() {
           verifierCount: data.verifier_count,
           verifierLabels: data.verifier_labels,
         });
+        await refreshEta();
         router.replace(`/page/${rescanTarget.id}`);
         return;
       }
 
       // 3b) NEW SCAN mode
-      const data = await runOcrScan(b64);
+      const data = await runOcrScan(b64, handleProgress);
       const scan: Scan = {
         id: data.id,
         imageUri: manipulated.uri,
@@ -121,6 +319,7 @@ export default function Index() {
         verifierLabels: data.verifier_labels,
       };
       await addScan(scan);
+      await refreshEta();
       router.push(`/page/${scan.id}`);
     } catch (e: any) {
       setError(e?.message ?? "Something went wrong");
@@ -130,8 +329,9 @@ export default function Index() {
       );
     } finally {
       setBusy(false);
+      setProgress(null);
     }
-  }, [busy, addScan, updateScan, router, rescanTarget]);
+  }, [busy, addScan, updateScan, router, rescanTarget, handleProgress, refreshEta]);
 
   // Permission states
   if (!permission) {
@@ -269,7 +469,7 @@ export default function Index() {
           </View>
         </TouchableOpacity>
 
-        {/* Mail button */}
+        {/* Pages button */}
         <TouchableOpacity
           style={[
             styles.mailBtn,
@@ -284,19 +484,12 @@ export default function Index() {
         </TouchableOpacity>
       </View>
 
-      {busy && (
-        <View style={styles.busyOverlay} pointerEvents="none">
-          <View style={styles.busyCard}>
-            <ActivityIndicator color="#3B82F6" size="large" />
-            <Text style={styles.busyTitle}>
-              {rescanTarget ? "Improving text…" : "AI is reading…"}
-            </Text>
-            <Text style={styles.busySub}>
-              {/* model label shown in busy overlay is decorative */}
-              AI vision
-            </Text>
-          </View>
-        </View>
+      {busy && progress && (
+        <SmartProgressOverlay
+          progress={progress}
+          etaSeconds={etaSeconds}
+          etaSamples={etaSamples}
+        />
       )}
 
       {error && (
@@ -307,6 +500,76 @@ export default function Index() {
     </View>
   );
 }
+
+const overlay = StyleSheet.create({
+  root: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+  card: {
+    width: "100%",
+    maxWidth: 360,
+    backgroundColor: "#fff",
+    borderRadius: 22,
+    paddingVertical: 20,
+    paddingHorizontal: 18,
+    gap: 14,
+  },
+  row: { flexDirection: "row", alignItems: "center", gap: 14 },
+  stageLabel: {
+    fontWeight: "800",
+    fontSize: 15,
+    color: "#09090B",
+    lineHeight: 20,
+  },
+  timer: {
+    color: "#52525B",
+    fontSize: 12,
+    marginTop: 4,
+    fontVariant: ["tabular-nums"],
+  },
+  barTrack: {
+    height: 8,
+    backgroundColor: "#F4F4F5",
+    borderRadius: 999,
+    overflow: "hidden",
+  },
+  barFill: {
+    height: "100%",
+    borderRadius: 999,
+  },
+  chipsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  chipsLabel: {
+    color: "#71717A",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1,
+    width: 78,
+  },
+  chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  chipText: { fontSize: 11, fontWeight: "800" },
+  help: {
+    color: "#A1A1AA",
+    fontSize: 11,
+    textAlign: "center",
+    lineHeight: 16,
+  },
+});
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#FAFAFA", gap: 12 },
@@ -439,23 +702,6 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   mailBtnText: { color: "#fff", fontWeight: "700" },
-
-  busyOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.45)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  busyCard: {
-    backgroundColor: "#fff",
-    borderRadius: 20,
-    paddingVertical: 24,
-    paddingHorizontal: 32,
-    alignItems: "center",
-    gap: 8,
-  },
-  busyTitle: { fontWeight: "800", fontSize: 16, color: "#09090B" },
-  busySub: { color: "#71717A", fontSize: 13 },
 
   errBanner: {
     position: "absolute",

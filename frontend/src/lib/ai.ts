@@ -8,6 +8,30 @@ import {
   providerById,
   ProviderId,
 } from "./aiSettings";
+import { recordDuration } from "./scanStats";
+
+// ---------- Progress events ----------
+export type ScanStage =
+  | "primary_request" // primary HTTPS request started
+  | "primary_done" // primary response received
+  | "finalize"; // building the result object
+
+export type ScanProgressEvent =
+  | {
+      kind: "stage";
+      stage: ScanStage;
+      label: string;
+    }
+  | {
+      kind: "verifier";
+      providerId: ProviderId;
+      label: string;
+      status: "pending" | "ok" | "fail";
+    };
+
+export type ScanProgressFn = (e: ScanProgressEvent) => void;
+
+const noop: ScanProgressFn = () => {};
 
 // ---------- Prompts ----------
 const OCR_PROMPT = `You are a high-quality OCR engine for English/Swedish documents.
@@ -426,7 +450,11 @@ function buildResult(
 }
 
 // ---------- Primary + verifier orchestration ----------
-async function runWithConsensus(prompt: string, imageBase64: string) {
+async function runWithConsensus(
+  prompt: string,
+  imageBase64: string,
+  onProgress: ScanProgressFn = noop
+) {
   const primary = await getActiveProvider();
   const primaryKey = await getApiKey(primary);
   if (!primaryKey) {
@@ -435,19 +463,70 @@ async function runWithConsensus(prompt: string, imageBase64: string) {
     );
   }
 
-  // Primary call (JSON) + verifier calls (plain text) in parallel
+  const primaryLabel = providerById(primary).label;
   const verifiers = await getActiveVerifiers();
   const verifierKeys = await Promise.all(verifiers.map((v) => getApiKey(v)));
 
-  const primaryTask = callProviderJson(primary, primaryKey, prompt, imageBase64);
+  // Emit "pending" status for every verifier up-front so the UI can render
+  // grey chips before any network activity happens.
+  for (const v of verifiers) {
+    onProgress({
+      kind: "verifier",
+      providerId: v,
+      label: providerById(v).label,
+      status: "pending",
+    });
+  }
+
+  onProgress({
+    kind: "stage",
+    stage: "primary_request",
+    label: verifiers.length
+      ? `${primaryLabel} is reading the document…`
+      : `${primaryLabel} is reading the document…`,
+  });
+
+  // Primary call (JSON) + verifier calls (plain text) in parallel
+  const primaryTask = callProviderJson(primary, primaryKey, prompt, imageBase64)
+    .then((res) => {
+      onProgress({
+        kind: "stage",
+        stage: "primary_done",
+        label: verifiers.length
+          ? `${primaryLabel} done · waiting for verifiers…`
+          : `${primaryLabel} done · finalizing…`,
+      });
+      return res;
+    });
+
   const verifierTasks = verifiers.map((v, i) =>
-    verifyText(v, verifierKeys[i], imageBase64).catch((e) => {
-      console.warn(`verifier ${v} failed:`, e?.message ?? e);
-      return null;
-    })
+    verifyText(v, verifierKeys[i], imageBase64).then(
+      (text) => {
+        onProgress({
+          kind: "verifier",
+          providerId: v,
+          label: providerById(v).label,
+          status: "ok",
+        });
+        return text;
+      },
+      (e) => {
+        console.warn(`verifier ${v} failed:`, e?.message ?? e);
+        onProgress({
+          kind: "verifier",
+          providerId: v,
+          label: providerById(v).label,
+          status: "fail",
+        });
+        return null;
+      }
+    )
   );
 
-  const [primaryRes, ...verifierResults] = await Promise.all([primaryTask, ...verifierTasks]);
+  const [primaryRes, ...verifierResults] = await Promise.all([
+    primaryTask,
+    ...verifierTasks,
+  ]);
   const primaryPlain = String(primaryRes?.plain_text ?? "");
   const goodTexts: string[] = [];
   const goodLabels: string[] = [];
@@ -465,6 +544,12 @@ async function runWithConsensus(prompt: string, imageBase64: string) {
     consensus = avg * 100;
   }
 
+  onProgress({
+    kind: "stage",
+    stage: "finalize",
+    label: "Finalizing result…",
+  });
+
   return {
     primaryRes,
     consensus,
@@ -474,27 +559,32 @@ async function runWithConsensus(prompt: string, imageBase64: string) {
 }
 
 // ---------- Public API ----------
-export async function runOcrScan(imageBase64: string): Promise<ScanResult> {
+export async function runOcrScan(
+  imageBase64: string,
+  onProgress: ScanProgressFn = noop
+): Promise<ScanResult> {
   if (!imageBase64) throw new Error("image required");
-  const { primaryRes, consensus, verifierCount, verifierLabels } = await runWithConsensus(
-    OCR_PROMPT,
-    imageBase64
-  );
-  return buildResult(primaryRes, 1, 0, consensus, verifierCount, verifierLabels);
+  const t0 = Date.now();
+  const { primaryRes, consensus, verifierCount, verifierLabels } =
+    await runWithConsensus(OCR_PROMPT, imageBase64, onProgress);
+  const result = buildResult(primaryRes, 1, 0, consensus, verifierCount, verifierLabels);
+  // Fire-and-forget: don't await – we don't want to slow the UI down.
+  recordDuration((Date.now() - t0) / 1000).catch(() => {});
+  return result;
 }
 
 export async function runOcrRescan(
   imageBase64: string,
   previousText: string,
   previousConfidence: number,
-  attempts: number
+  attempts: number,
+  onProgress: ScanProgressFn = noop
 ): Promise<ScanResult> {
   if (!imageBase64) throw new Error("image required");
-  const { primaryRes, consensus, verifierCount, verifierLabels } = await runWithConsensus(
-    rescanPrompt(previousText),
-    imageBase64
-  );
-  return buildResult(
+  const t0 = Date.now();
+  const { primaryRes, consensus, verifierCount, verifierLabels } =
+    await runWithConsensus(rescanPrompt(previousText), imageBase64, onProgress);
+  const result = buildResult(
     primaryRes,
     Math.max(2, attempts + 1),
     previousConfidence || 0,
@@ -502,6 +592,8 @@ export async function runOcrRescan(
     verifierCount,
     verifierLabels
   );
+  recordDuration((Date.now() - t0) / 1000).catch(() => {});
+  return result;
 }
 
 export async function runOrganize(pages: OrganizeInput[]): Promise<OrganizedPage[]> {
