@@ -18,12 +18,15 @@ import { Ionicons } from "@expo/vector-icons";
 import {
   PROVIDERS,
   ProviderId,
+  SpeedMode,
   getActiveProvider,
   setActiveProvider,
   getApiKey,
   setApiKey,
   getVerifier,
   setVerifier,
+  getSpeedMode,
+  setSpeedMode,
   maskKey,
 } from "@/src/lib/aiSettings";
 import { testConnection } from "@/src/lib/ai";
@@ -37,6 +40,7 @@ type Row = {
   saving: boolean;
   testing: boolean;
   verify: boolean;
+  speed: SpeedMode;
   status?: string;
   error?: string;
 };
@@ -53,6 +57,7 @@ export default function SettingsScreen() {
       saving: false,
       testing: false,
       verify: false,
+      speed: "balanced" as SpeedMode,
     }))
   );
   const [loaded, setLoaded] = useState(false);
@@ -63,7 +68,11 @@ export default function SettingsScreen() {
       setActive(cur);
       const next: Row[] = [];
       for (const p of PROVIDERS) {
-        const [v, ver] = await Promise.all([getApiKey(p.id), getVerifier(p.id)]);
+        const [v, ver, sp] = await Promise.all([
+          getApiKey(p.id),
+          getVerifier(p.id),
+          getSpeedMode(p.id),
+        ]);
         next.push({
           id: p.id,
           value: v || "",
@@ -71,6 +80,7 @@ export default function SettingsScreen() {
           saving: false,
           testing: false,
           verify: ver,
+          speed: sp,
         });
       }
       setRows(next);
@@ -133,6 +143,15 @@ export default function SettingsScreen() {
   const handleToggleVerify = useCallback(async (id: ProviderId, on: boolean) => {
     updateRow(id, { verify: on });
     await setVerifier(id, on);
+  }, []);
+
+  const handleSpeedChange = useCallback(async (id: ProviderId, mode: SpeedMode) => {
+    updateRow(id, { speed: mode });
+    try {
+      await setSpeedMode(id, mode);
+    } catch {
+      /* ignore */
+    }
   }, []);
 
   if (!loaded) {
@@ -208,7 +227,6 @@ export default function SettingsScreen() {
                       </View>
                     )}
                   </View>
-                  <Text style={styles.cardModel}>Model: {p.model}</Text>
                   <Text style={styles.cardHint}>{p.hint}</Text>
                 </View>
                 <View
@@ -220,6 +238,37 @@ export default function SettingsScreen() {
                   {isActive && <View style={styles.radioInner} />}
                 </View>
               </TouchableOpacity>
+
+              {/* Speed mode picker: choose Fast / Balanced / Best per provider */}
+              <View style={styles.speedRow}>
+                <Text style={styles.speedLabel}>SPEED</Text>
+                <View style={styles.speedSegmented}>
+                  {(["fast", "balanced", "best"] as SpeedMode[]).map((mode) => {
+                    const selected = row.speed === mode;
+                    return (
+                      <TouchableOpacity
+                        key={mode}
+                        style={[styles.speedSeg, selected && styles.speedSegOn]}
+                        onPress={() => handleSpeedChange(p.id, mode)}
+                        activeOpacity={0.7}
+                        testID={`speed-${p.id}-${mode}`}
+                      >
+                        <Text
+                          style={[
+                            styles.speedSegText,
+                            selected && styles.speedSegTextOn,
+                          ]}
+                        >
+                          {mode === "fast" ? "Fast" : mode === "balanced" ? "Balanced" : "Best"}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+              <Text style={styles.speedHint}>
+                {p.modeHints[row.speed]} · model: <Text style={{ fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }}>{p.models[row.speed]}</Text>
+              </Text>
 
               <View style={styles.keyRow}>
                 <TextInput
@@ -407,6 +456,57 @@ const styles = StyleSheet.create({
   cardTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   cardTitle: { fontSize: 18, fontWeight: "900", color: "#09090B" },
   cardModel: { color: "#52525B", fontSize: 12, marginTop: 2, fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }) },
+
+  // Speed-mode selector
+  speedRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 8,
+  },
+  speedLabel: {
+    color: "#71717A",
+    fontWeight: "900",
+    fontSize: 10,
+    letterSpacing: 1.2,
+    width: 50,
+  },
+  speedSegmented: {
+    flex: 1,
+    flexDirection: "row",
+    backgroundColor: "#F4F4F5",
+    borderRadius: 10,
+    padding: 3,
+  },
+  speedSeg: {
+    flex: 1,
+    paddingVertical: 7,
+    alignItems: "center",
+    borderRadius: 8,
+  },
+  speedSegOn: {
+    backgroundColor: "#fff",
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
+  },
+  speedSegText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#71717A",
+  },
+  speedSegTextOn: {
+    color: "#09090B",
+    fontWeight: "900",
+  },
+  speedHint: {
+    color: "#71717A",
+    fontSize: 11,
+    marginTop: 6,
+    lineHeight: 16,
+  },
   cardHint: { color: "#71717A", fontSize: 13, marginTop: 4, lineHeight: 18 },
 
   activePill: {

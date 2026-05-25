@@ -7,40 +7,76 @@
 import { storage } from "@/src/utils/storage";
 
 export type ProviderId = "openai" | "gemini" | "anthropic";
+export type SpeedMode = "fast" | "balanced" | "best";
+
+export type ModelMap = Record<SpeedMode, string>;
 
 export type ProviderInfo = {
   id: ProviderId;
   label: string;
-  model: string;
+  /** UI hint about the provider's strengths. */
   hint: string;
+  /** Where the user gets a key. */
   consoleUrl: string;
+  /** Expected prefix to validate the key on save. */
   keyPrefix: string;
+  /** Underlying model IDs per speed mode. */
+  models: ModelMap;
+  /** UI copy describing each mode. */
+  modeHints: ModelMap;
 };
 
 export const PROVIDERS: ProviderInfo[] = [
   {
     id: "openai",
     label: "OpenAI",
-    model: "gpt-5.5",
     hint: "Best overall vision + structuring. Default choice.",
     consoleUrl: "https://platform.openai.com/api-keys",
     keyPrefix: "sk-",
+    models: {
+      fast: "gpt-5-mini",
+      balanced: "gpt-5",
+      best: "gpt-5.5",
+    },
+    modeHints: {
+      fast: "~10–20 s/page · cheapest",
+      balanced: "~20–35 s/page",
+      best: "~30–60 s/page · top quality",
+    },
   },
   {
     id: "gemini",
     label: "Google Gemini",
-    model: "gemini-3.1-pro-preview",
     hint: "Strong at low-quality / handwritten scans.",
     consoleUrl: "https://aistudio.google.com/app/apikey",
     keyPrefix: "AIza",
+    models: {
+      fast: "gemini-2.5-flash",
+      balanced: "gemini-2.5-pro",
+      best: "gemini-3.1-pro-preview",
+    },
+    modeHints: {
+      fast: "~8–15 s/page · cheapest",
+      balanced: "~20–35 s/page",
+      best: "~40–80 s/page · top quality",
+    },
   },
   {
     id: "anthropic",
     label: "Anthropic Claude",
-    model: "claude-sonnet-4-5",
     hint: "Excellent at preserving document structure & nuance.",
     consoleUrl: "https://console.anthropic.com/settings/keys",
     keyPrefix: "sk-ant-",
+    models: {
+      fast: "claude-haiku-4-5",
+      balanced: "claude-sonnet-4-5",
+      best: "claude-sonnet-4-5",
+    },
+    modeHints: {
+      fast: "~10–20 s/page · cheapest",
+      balanced: "~25–45 s/page",
+      best: "~25–45 s/page · top quality",
+    },
   },
 ];
 
@@ -51,6 +87,7 @@ export function providerById(id: ProviderId): ProviderInfo {
 const ACTIVE_KEY = "ai.activeProvider";
 const KEY_OF = (id: ProviderId) => `ai.key.${id}`;
 const VERIFIER_OF = (id: ProviderId) => `ai.verifier.${id}`;
+const SPEED_OF = (id: ProviderId) => `ai.speed.${id}`;
 
 export async function getActiveProvider(): Promise<ProviderId> {
   const v = await storage.getItem<string>(ACTIVE_KEY, "openai");
@@ -83,6 +120,23 @@ export async function getVerifier(id: ProviderId): Promise<boolean> {
 
 export async function setVerifier(id: ProviderId, on: boolean): Promise<void> {
   await storage.setItem(VERIFIER_OF(id), !!on);
+}
+
+/** Speed/quality mode per provider. Default: balanced. */
+export async function getSpeedMode(id: ProviderId): Promise<SpeedMode> {
+  const v = await storage.getItem<string>(SPEED_OF(id), "balanced");
+  if (v === "fast" || v === "balanced" || v === "best") return v;
+  return "balanced";
+}
+
+export async function setSpeedMode(id: ProviderId, mode: SpeedMode): Promise<void> {
+  await storage.setItem(SPEED_OF(id), mode);
+}
+
+/** Resolve the actual model ID to send to the provider's API. */
+export async function getModelFor(id: ProviderId): Promise<string> {
+  const mode = await getSpeedMode(id);
+  return providerById(id).models[mode];
 }
 
 /** Returns the list of providers that have a key AND verifier=on AND are

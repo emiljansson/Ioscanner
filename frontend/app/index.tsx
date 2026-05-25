@@ -258,11 +258,12 @@ export default function Index() {
         p ? { ...p, stage: "compress", stageLabel: "Compressing image…" } : p
       );
 
-      // 2) downscale + jpeg to keep payload small
+      // 2) downscale + jpeg to keep payload small. 1200px wide is plenty for
+      //    OCR and roughly halves the bytes vs 1600px → faster upload on 5G.
       const manipulated = await ImageManipulator.manipulateAsync(
         photo.uri,
-        [{ resize: { width: 1600 } }],
-        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+        [{ resize: { width: 1200 } }],
+        { compress: 0.65, format: ImageManipulator.SaveFormat.JPEG, base64: true }
       );
       const b64 = manipulated.base64;
       if (!b64) throw new Error("Could not encode image");

@@ -5,6 +5,7 @@ import {
   getActiveProvider,
   getActiveVerifiers,
   getApiKey,
+  getModelFor,
   providerById,
   ProviderId,
 } from "./aiSettings";
@@ -153,7 +154,7 @@ void clampConfidence;
 async function fetchWithTimeout(
   url: string,
   init: RequestInit,
-  timeoutMs = 120000
+  timeoutMs = 75000
 ): Promise<Response> {
   const attempt = async (): Promise<Response> => {
     const controller = new AbortController();
@@ -202,8 +203,14 @@ async function fetchWithTimeout(
 }
 
 // ---------- Provider routers (JSON output for primary) ----------
-async function callOpenAIJson(apiKey: string, prompt: string, imageBase64: string | null): Promise<any> {
-  // GPT-5.5 uses the new Responses API (/v1/responses) with input_text / input_image
+async function callOpenAIJson(
+  apiKey: string,
+  prompt: string,
+  imageBase64: string | null,
+  model: string,
+  timeoutMs?: number
+): Promise<any> {
+  // GPT-5 family uses the Responses API (/v1/responses) with input_text / input_image
   const userContent: any[] = [{ type: "input_text", text: prompt }];
   if (imageBase64) {
     userContent.push({
@@ -211,14 +218,18 @@ async function callOpenAIJson(apiKey: string, prompt: string, imageBase64: strin
       image_url: `data:image/jpeg;base64,${imageBase64}`,
     });
   }
-  const res = await fetchWithTimeout("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: "gpt-5.5",
-      input: [{ role: "user", content: userContent }],
-    }),
-  });
+  const res = await fetchWithTimeout(
+    "https://api.openai.com/v1/responses",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        input: [{ role: "user", content: userContent }],
+      }),
+    },
+    timeoutMs
+  );
   if (!res.ok) throw new Error(`OpenAI ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const data = await res.json();
   const raw: string =
@@ -233,27 +244,43 @@ async function callOpenAIJson(apiKey: string, prompt: string, imageBase64: strin
   return JSON.parse(stripJson(raw));
 }
 
-async function callGeminiJson(apiKey: string, prompt: string, imageBase64: string | null): Promise<any> {
+async function callGeminiJson(
+  apiKey: string,
+  prompt: string,
+  imageBase64: string | null,
+  model: string,
+  timeoutMs?: number
+): Promise<any> {
   const parts: any[] = [{ text: prompt }];
   if (imageBase64) parts.push({ inline_data: { mime_type: "image/jpeg", data: imageBase64 } });
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent?key=${encodeURIComponent(
-    apiKey
-  )}`;
-  const res = await fetchWithTimeout(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts }],
-      generationConfig: { responseMimeType: "application/json" },
-    }),
-  });
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+    model
+  )}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const res = await fetchWithTimeout(
+    url,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts }],
+        generationConfig: { responseMimeType: "application/json" },
+      }),
+    },
+    timeoutMs
+  );
   if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const data = await res.json();
   const raw: string = data?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || "").join("") ?? "{}";
   return JSON.parse(stripJson(raw));
 }
 
-async function callAnthropicJson(apiKey: string, prompt: string, imageBase64: string | null): Promise<any> {
+async function callAnthropicJson(
+  apiKey: string,
+  prompt: string,
+  imageBase64: string | null,
+  model: string,
+  timeoutMs?: number
+): Promise<any> {
   const content: any[] = [];
   if (imageBase64)
     content.push({
@@ -261,54 +288,75 @@ async function callAnthropicJson(apiKey: string, prompt: string, imageBase64: st
       source: { type: "base64", media_type: "image/jpeg", data: imageBase64 },
     });
   content.push({ type: "text", text: prompt });
-  const res = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
+  const res = await fetchWithTimeout(
+    "https://api.anthropic.com/v1/messages",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 4000,
+        messages: [{ role: "user", content }],
+      }),
     },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-5",
-      max_tokens: 4000,
-      messages: [{ role: "user", content }],
-    }),
-  });
+    timeoutMs
+  );
   if (!res.ok) throw new Error(`Claude ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const data = await res.json();
   const raw: string = data?.content?.map((c: any) => c?.text || "").join("") ?? "{}";
   return JSON.parse(stripJson(raw));
 }
 
-async function callProviderJson(id: ProviderId, apiKey: string, prompt: string, imageBase64: string | null) {
-  if (id === "openai") return callOpenAIJson(apiKey, prompt, imageBase64);
-  if (id === "gemini") return callGeminiJson(apiKey, prompt, imageBase64);
-  return callAnthropicJson(apiKey, prompt, imageBase64);
+async function callProviderJson(
+  id: ProviderId,
+  apiKey: string,
+  prompt: string,
+  imageBase64: string | null,
+  timeoutMs?: number
+) {
+  // Resolve the actual model from the user's chosen Speed Mode for this provider.
+  const model = await getModelFor(id);
+  if (id === "openai") return callOpenAIJson(apiKey, prompt, imageBase64, model, timeoutMs);
+  if (id === "gemini") return callGeminiJson(apiKey, prompt, imageBase64, model, timeoutMs);
+  return callAnthropicJson(apiKey, prompt, imageBase64, model, timeoutMs);
 }
 
 // ---------- Verifier: returns raw plain text ----------
+// Verifiers always use the provider's `fast` model — they only need to extract
+// text for similarity matching, not produce structured JSON. Plus, we use a
+// shorter timeout (45s) so a hung verifier never blocks the primary result.
 async function verifyText(id: ProviderId, apiKey: string, imageBase64: string): Promise<string> {
+  const fastModel = providerById(id).models.fast;
+  const VERIFIER_TIMEOUT = 45000;
   if (id === "openai") {
-    const res = await fetchWithTimeout("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: "gpt-5.5",
-        input: [
-          {
-            role: "user",
-            content: [
-              { type: "input_text", text: VERIFY_PROMPT },
-              {
-                type: "input_image",
-                image_url: `data:image/jpeg;base64,${imageBase64}`,
-              },
-            ],
-          },
-        ],
-      }),
-    });
+    const res = await fetchWithTimeout(
+      "https://api.openai.com/v1/responses",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: fastModel,
+          input: [
+            {
+              role: "user",
+              content: [
+                { type: "input_text", text: VERIFY_PROMPT },
+                {
+                  type: "input_image",
+                  image_url: `data:image/jpeg;base64,${imageBase64}`,
+                },
+              ],
+            },
+          ],
+        }),
+      },
+      VERIFIER_TIMEOUT
+    );
     if (!res.ok) throw new Error(`verify openai ${res.status}`);
     const data = await res.json();
     const text =
@@ -322,51 +370,59 @@ async function verifyText(id: ProviderId, apiKey: string, imageBase64: string): 
     return String(text ?? "").trim();
   }
   if (id === "gemini") {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent?key=${encodeURIComponent(
-      apiKey
-    )}`;
-    const res = await fetchWithTimeout(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [
-              { text: VERIFY_PROMPT },
-              { inline_data: { mime_type: "image/jpeg", data: imageBase64 } },
-            ],
-          },
-        ],
-      }),
-    });
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+      fastModel
+    )}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: "user",
+              parts: [
+                { text: VERIFY_PROMPT },
+                { inline_data: { mime_type: "image/jpeg", data: imageBase64 } },
+              ],
+            },
+          ],
+        }),
+      },
+      VERIFIER_TIMEOUT
+    );
     if (!res.ok) throw new Error(`verify gemini ${res.status}`);
     const data = await res.json();
     return String(data?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || "").join("") ?? "").trim();
   }
   // anthropic
-  const res = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
+  const res = await fetchWithTimeout(
+    "https://api.anthropic.com/v1/messages",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({
+        model: fastModel,
+        max_tokens: 2000,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageBase64 } },
+              { type: "text", text: VERIFY_PROMPT },
+            ],
+          },
+        ],
+      }),
     },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-5",
-      max_tokens: 2000,
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageBase64 } },
-            { type: "text", text: VERIFY_PROMPT },
-          ],
-        },
-      ],
-    }),
-  });
+    VERIFIER_TIMEOUT
+  );
   if (!res.ok) throw new Error(`verify claude ${res.status}`);
   const data = await res.json();
   return String(data?.content?.map((c: any) => c?.text || "").join("") ?? "").trim();
