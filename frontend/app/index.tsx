@@ -469,18 +469,21 @@ export default function Index() {
           </View>
         </TouchableOpacity>
 
-        {/* Pages button */}
+        {/* Pages button — always tappable so the user can review past scans
+            even before taking a new one. Shows the scan count when > 0. */}
         <TouchableOpacity
-          style={[
-            styles.mailBtn,
-            { opacity: scans.length ? 1 : 0.4 },
-          ]}
-          onPress={() => scans.length && router.push("/pages")}
-          disabled={!scans.length}
+          style={styles.mailBtn}
+          onPress={() => router.push("/pages")}
           testID="open-pages-btn"
+          activeOpacity={0.8}
         >
           <Ionicons name="copy-outline" size={20} color="#fff" />
           <Text style={styles.mailBtnText}>Pages</Text>
+          {scans.length > 0 && (
+            <View style={styles.mailBtnBadge}>
+              <Text style={styles.mailBtnBadgeText}>{scans.length}</Text>
+            </View>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -702,6 +705,22 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   mailBtnText: { color: "#fff", fontWeight: "700" },
+  mailBtnBadge: {
+    backgroundColor: "#3B82F6",
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    paddingHorizontal: 6,
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 2,
+  },
+  mailBtnBadgeText: {
+    color: "#fff",
+    fontWeight: "900",
+    fontSize: 11,
+    fontVariant: ["tabular-nums"],
+  },
 
   errBanner: {
     position: "absolute",
