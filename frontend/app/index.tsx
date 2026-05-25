@@ -10,6 +10,7 @@ import {
   Image,
   Animated,
   Easing,
+  Linking,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions } from "expo-camera";
@@ -26,6 +27,8 @@ import {
 } from "@/src/lib/ai";
 import { getEta } from "@/src/lib/scanStats";
 import { type ProviderId } from "@/src/lib/aiSettings";
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { classifyError } = require("@/src/lib/errorMessages");
 
 function confColor(c: number) {
   if (c >= 90) return "#16A34A";
@@ -322,11 +325,27 @@ export default function Index() {
       await refreshEta();
       router.push(`/page/${scan.id}`);
     } catch (e: any) {
-      setError(e?.message ?? "Something went wrong");
-      Alert.alert(
-        rescanTarget ? "Rescan failed" : "Scan failed",
-        e?.message ?? "Unknown error"
-      );
+      const classified = classifyError(e?.message ?? String(e));
+      // Inline banner: just the short title.
+      setError(classified.title);
+      // Build a contextual Alert with actions tailored to the error type.
+      const buttons: any[] = [];
+      if (classified.billingUrl) {
+        buttons.push({
+          text: "Top up credit",
+          onPress: () => Linking.openURL(classified.billingUrl).catch(() => {}),
+        });
+      }
+      if (classified.openSettings) {
+        buttons.push({
+          text: "Open Settings",
+          onPress: () => router.push("/settings"),
+        });
+      }
+      // Always offer a dismiss button. Use "cancel" style so it's bolded
+      // on iOS and acts as the default tap zone.
+      buttons.push({ text: "OK", style: "cancel" });
+      Alert.alert(classified.title, classified.detail, buttons);
     } finally {
       setBusy(false);
       setProgress(null);
@@ -496,9 +515,18 @@ export default function Index() {
       )}
 
       {error && (
-        <View style={[styles.errBanner, { top: insets.top + 60 }]}>
-          <Text style={styles.errText}>{error}</Text>
-        </View>
+        <TouchableOpacity
+          style={[styles.errBanner, { top: insets.top + 60 }]}
+          onPress={() => setError(null)}
+          activeOpacity={0.85}
+          testID="error-banner"
+        >
+          <Ionicons name="alert-circle" size={18} color="#991B1B" />
+          <Text style={styles.errText} numberOfLines={2}>
+            {error}
+          </Text>
+          <Ionicons name="close" size={16} color="#991B1B" />
+        </TouchableOpacity>
       )}
     </View>
   );
@@ -726,11 +754,15 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 16,
     right: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
     backgroundColor: "#FEE2E2",
     borderColor: "#FCA5A5",
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
   },
-  errText: { color: "#991B1B", fontSize: 13 },
+  errText: { flex: 1, color: "#991B1B", fontSize: 13, fontWeight: "700" },
 });

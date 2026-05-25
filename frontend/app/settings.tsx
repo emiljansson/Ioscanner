@@ -27,6 +27,8 @@ import {
   maskKey,
 } from "@/src/lib/aiSettings";
 import { testConnection } from "@/src/lib/ai";
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { classifyError } = require("@/src/lib/errorMessages");
 
 type Row = {
   id: ProviderId;
@@ -110,7 +112,8 @@ export default function SettingsScreen() {
         await setActiveProvider(prevActive);
       }
     } catch (e: any) {
-      updateRow(id, { testing: false, error: e?.message ?? "Test failed" });
+      const c = classifyError(e?.message ?? "Test failed");
+      updateRow(id, { testing: false, error: c.title });
     }
   }, []);
 
