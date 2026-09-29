@@ -98,7 +98,7 @@ function SmartProgressOverlay({
   const overtime = elapsed > etaSeconds + 2;
 
   return (
-    <View style={overlay.root} pointerEvents="none">
+    <View style={[overlay.root, { pointerEvents: "none" as const }]}>
       <View style={overlay.card}>
         {/* Batch header (only shown when importing multiple photos) */}
         {progress.batchTotal && progress.batchTotal > 1 ? (
@@ -603,7 +603,7 @@ export default function Index() {
       </View>
 
       {/* Frame overlay */}
-      <View pointerEvents="none" style={styles.frameWrap}>
+      <View style={[styles.frameWrap, { pointerEvents: "none" as const }]}>
         <View style={styles.frame} />
         <Text style={styles.frameHint}>Point the camera at the document</Text>
       </View>

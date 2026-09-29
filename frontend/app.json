@@ -2,7 +2,7 @@
   "expo": {
     "name": "CopyThat",
     "slug": "copythat",
-    "version": "1.3.0",
+    "version": "1.4.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "copythat",
@@ -11,7 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "se.jawel.copythat",
-      "buildNumber": "5",
+      "buildNumber": "6",
       "infoPlist": {
         "NSCameraUsageDescription": "Scan documents to extract text via AI",
         "NSPhotoLibraryUsageDescription": "Import existing photos to scan text",
@@ -20,7 +20,7 @@
     },
     "android": {
       "package": "se.jawel.copythat",
-      "versionCode": 5,
+      "versionCode": 6,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#F4E9D8"
@@ -58,7 +58,12 @@
         {
           "photosPermission": "Import existing photos to scan text"
         }
-      ]
+      ],
+      "expo-font",
+      "expo-image",
+      "expo-secure-store",
+      "expo-status-bar",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true

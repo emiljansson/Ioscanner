@@ -368,7 +368,7 @@ export default function PagesScreen() {
       </View>
 
       {copied && (
-        <View style={styles.toast} pointerEvents="none">
+        <View style={[styles.toast, { pointerEvents: "none" as const }]}>
           <View style={styles.toastInner}>
             <Ionicons name="checkmark-circle" size={22} color="#16A34A" />
             <Text style={styles.toastText}>Copied!</Text>
