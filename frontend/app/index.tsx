@@ -15,6 +15,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as ImageManipulator from "expo-image-manipulator";
+import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useScans, type Scan } from "@/src/store/scans";
@@ -47,6 +48,8 @@ type ProgressState = {
   stage: ScanStage | "compress";
   verifiers: VerifierChip[];
   startedAt: number;
+  batchIndex?: number; // 1-based
+  batchTotal?: number; // total items in the current import batch
 };
 
 function formatSeconds(s: number): string {
@@ -97,6 +100,16 @@ function SmartProgressOverlay({
   return (
     <View style={overlay.root} pointerEvents="none">
       <View style={overlay.card}>
+        {/* Batch header (only shown when importing multiple photos) */}
+        {progress.batchTotal && progress.batchTotal > 1 ? (
+          <View style={overlay.batchRow}>
+            <Ionicons name="images-outline" size={14} color="#3B82F6" />
+            <Text style={overlay.batchText}>
+              Importing {progress.batchIndex} of {progress.batchTotal}
+            </Text>
+          </View>
+        ) : null}
+
         {/* Stage label + spinner */}
         <View style={overlay.row}>
           <ActivityIndicator color="#3B82F6" />
@@ -234,12 +247,105 @@ export default function Index() {
     });
   }, []);
 
+  /**
+   * Full new-scan pipeline: compress → OCR → save. Reused by camera capture
+   * AND by "Import from library" batch flow. Returns the created Scan.
+   */
+  const processNewScanFromUri = useCallback(
+    async (
+      sourceUri: string,
+      batchOpts?: { index: number; total: number }
+    ): Promise<Scan> => {
+      // (Re)start progress state so the timer/ETA reflect THIS image.
+      setProgress({
+        stage: "compress",
+        stageLabel: batchOpts
+          ? `Compressing photo ${batchOpts.index} of ${batchOpts.total}…`
+          : "Compressing image…",
+        verifiers: [],
+        startedAt: Date.now(),
+        batchIndex: batchOpts?.index,
+        batchTotal: batchOpts?.total,
+      });
+
+      // 1) Downscale + JPEG to keep payload small.
+      const manipulated = await ImageManipulator.manipulateAsync(
+        sourceUri,
+        [{ resize: { width: 1200 } }],
+        { compress: 0.65, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+      );
+      const b64 = manipulated.base64;
+      if (!b64) throw new Error("Could not encode image");
+
+      // 2) OCR — progress events flow through handleProgress but we keep
+      //    the batch counter intact by patching AFTER each stage event.
+      const wrappedProgress: ScanProgressFn = (e) => {
+        handleProgress(e);
+        if (batchOpts) {
+          setProgress((p) =>
+            p
+              ? {
+                  ...p,
+                  batchIndex: batchOpts.index,
+                  batchTotal: batchOpts.total,
+                }
+              : p
+          );
+        }
+      };
+      const data = await runOcrScan(b64, wrappedProgress);
+      const scan: Scan = {
+        id: data.id,
+        imageUri: manipulated.uri,
+        structuredText: data.structured_text || "",
+        plainText: data.plain_text || "",
+        confidence: data.confidence_percent || 0,
+        errorEstimate: data.error_estimate_percent || 0,
+        coherenceScore: data.coherence_score || 0,
+        coherenceNote: data.coherence_note || "",
+        pageNumber: data.page_number ?? null,
+        pageSource: data.page_source || "missing",
+        pageNote: data.page_note || "",
+        attempts: data.attempts || 1,
+        consensusScore: data.consensus_score,
+        verifierCount: data.verifier_count,
+        verifierLabels: data.verifier_labels,
+      };
+      await addScan(scan);
+      await refreshEta();
+      return scan;
+    },
+    [addScan, refreshEta, handleProgress]
+  );
+
+  const showErrorAlert = useCallback(
+    (rawMessage: string, contextTitle?: string) => {
+      const classified = classifyError(rawMessage);
+      setError(contextTitle ? `${contextTitle}: ${classified.title}` : classified.title);
+      const buttons: any[] = [];
+      if (classified.billingUrl) {
+        buttons.push({
+          text: "Top up credit",
+          onPress: () =>
+            Linking.openURL(classified.billingUrl).catch(() => {}),
+        });
+      }
+      if (classified.openSettings) {
+        buttons.push({
+          text: "Open Settings",
+          onPress: () => router.push("/settings"),
+        });
+      }
+      buttons.push({ text: "OK", style: "cancel" });
+      Alert.alert(classified.title, classified.detail, buttons);
+    },
+    [router]
+  );
+
   const handleCapture = useCallback(async () => {
     if (!cameraRef.current || busy) return;
     setError(null);
     setBusy(true);
-    // Initial progress state – set BEFORE the camera shutter so the user
-    // sees feedback immediately.
     setProgress({
       stage: "compress",
       stageLabel: "Capturing photo…",
@@ -254,22 +360,18 @@ export default function Index() {
       });
       if (!photo?.uri) throw new Error("No image captured");
 
-      setProgress((p) =>
-        p ? { ...p, stage: "compress", stageLabel: "Compressing image…" } : p
-      );
-
-      // 2) downscale + jpeg to keep payload small. 1200px wide is plenty for
-      //    OCR and roughly halves the bytes vs 1600px → faster upload on 5G.
-      const manipulated = await ImageManipulator.manipulateAsync(
-        photo.uri,
-        [{ resize: { width: 1200 } }],
-        { compress: 0.65, format: ImageManipulator.SaveFormat.JPEG, base64: true }
-      );
-      const b64 = manipulated.base64;
-      if (!b64) throw new Error("Could not encode image");
-
-      // 3a) RESCAN mode — improve an existing page with a new photo
+      // 2) RESCAN mode — improve an existing page with a new photo
       if (rescanTarget) {
+        setProgress((p) =>
+          p ? { ...p, stageLabel: "Compressing image…" } : p
+        );
+        const manipulated = await ImageManipulator.manipulateAsync(
+          photo.uri,
+          [{ resize: { width: 1200 } }],
+          { compress: 0.65, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+        );
+        const b64 = manipulated.base64;
+        if (!b64) throw new Error("Could not encode image");
         const data = await runOcrRescan(
           b64,
           rescanTarget.structuredText,
@@ -303,55 +405,111 @@ export default function Index() {
         return;
       }
 
-      // 3b) NEW SCAN mode
-      const data = await runOcrScan(b64, handleProgress);
-      const scan: Scan = {
-        id: data.id,
-        imageUri: manipulated.uri,
-        structuredText: data.structured_text || "",
-        plainText: data.plain_text || "",
-        confidence: data.confidence_percent || 0,
-        errorEstimate: data.error_estimate_percent || 0,
-        coherenceScore: data.coherence_score || 0,
-        coherenceNote: data.coherence_note || "",
-        pageNumber: data.page_number ?? null,
-        pageSource: data.page_source || "missing",
-        pageNote: data.page_note || "",
-        attempts: data.attempts || 1,
-        consensusScore: data.consensus_score,
-        verifierCount: data.verifier_count,
-        verifierLabels: data.verifier_labels,
-      };
-      await addScan(scan);
-      await refreshEta();
+      // 3) NEW SCAN mode – shared pipeline
+      const scan = await processNewScanFromUri(photo.uri);
       router.push(`/page/${scan.id}`);
     } catch (e: any) {
-      const classified = classifyError(e?.message ?? String(e));
-      // Inline banner: just the short title.
-      setError(classified.title);
-      // Build a contextual Alert with actions tailored to the error type.
-      const buttons: any[] = [];
-      if (classified.billingUrl) {
-        buttons.push({
-          text: "Top up credit",
-          onPress: () => Linking.openURL(classified.billingUrl).catch(() => {}),
-        });
-      }
-      if (classified.openSettings) {
-        buttons.push({
-          text: "Open Settings",
-          onPress: () => router.push("/settings"),
-        });
-      }
-      // Always offer a dismiss button. Use "cancel" style so it's bolded
-      // on iOS and acts as the default tap zone.
-      buttons.push({ text: "OK", style: "cancel" });
-      Alert.alert(classified.title, classified.detail, buttons);
+      showErrorAlert(e?.message ?? String(e));
     } finally {
       setBusy(false);
       setProgress(null);
     }
-  }, [busy, addScan, updateScan, router, rescanTarget, handleProgress, refreshEta]);
+  }, [
+    busy,
+    updateScan,
+    router,
+    rescanTarget,
+    handleProgress,
+    refreshEta,
+    processNewScanFromUri,
+    showErrorAlert,
+  ]);
+
+  const handleImport = useCallback(async () => {
+    if (busy) return;
+    setError(null);
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        if (!perm.canAskAgain) {
+          Alert.alert(
+            "Photo access needed",
+            "Enable photo library access in Settings to import photos.",
+            [
+              { text: "Open Settings", onPress: () => Linking.openSettings() },
+              { text: "Cancel", style: "cancel" },
+            ]
+          );
+        }
+        return;
+      }
+      const res = await ImagePicker.launchImageLibraryAsync({
+        // Only pick still images (skip videos / live photos).
+        mediaTypes: ["images"],
+        allowsMultipleSelection: true,
+        quality: 1,
+        selectionLimit: 20,
+        exif: false,
+      });
+      if (res.canceled) return;
+      const assets = res.assets ?? [];
+      if (assets.length === 0) return;
+
+      setBusy(true);
+      const total = assets.length;
+      let succeeded = 0;
+      let firstScanId: string | null = null;
+      const failures: string[] = [];
+
+      for (let i = 0; i < assets.length; i++) {
+        const uri = assets[i]?.uri;
+        if (!uri) continue;
+        try {
+          const scan = await processNewScanFromUri(uri, {
+            index: i + 1,
+            total,
+          });
+          if (!firstScanId) firstScanId = scan.id;
+          succeeded++;
+        } catch (e: any) {
+          const c = classifyError(e?.message ?? String(e));
+          failures.push(`Photo ${i + 1}: ${c.title}`);
+          // If the error is fatal (no key / invalid key / quota) abort the
+          // rest of the batch – no point in burning through 20 attempts.
+          if (
+            c.type === "no_key" ||
+            c.type === "invalid_key" ||
+            c.type === "quota"
+          ) {
+            showErrorAlert(
+              e?.message ?? String(e),
+              `Import stopped after ${succeeded}/${total}`
+            );
+            break;
+          }
+        }
+      }
+
+      if (succeeded > 0) {
+        // Navigate to Pages list so the user sees all imports at once.
+        router.push("/pages");
+      }
+      if (failures.length > 0 && succeeded > 0) {
+        // Non-blocking summary of partial failure.
+        Alert.alert(
+          `Imported ${succeeded} of ${total}`,
+          failures.slice(0, 5).join("\n") +
+            (failures.length > 5 ? `\n…and ${failures.length - 5} more` : ""),
+          [{ text: "OK", style: "cancel" }]
+        );
+      }
+    } catch (e: any) {
+      showErrorAlert(e?.message ?? "Import failed");
+    } finally {
+      setBusy(false);
+      setProgress(null);
+    }
+  }, [busy, processNewScanFromUri, router, showErrorAlert]);
 
   // Permission states
   if (!permission) {
@@ -411,6 +569,17 @@ export default function Index() {
             <Ionicons name={flashIcon as any} size={16} color="#fff" />
             <Text style={styles.flashPillText}>{flashLabel}</Text>
           </TouchableOpacity>
+          {!rescanTarget && (
+            <TouchableOpacity
+              style={styles.flashPill}
+              onPress={handleImport}
+              disabled={busy}
+              testID="import-photos-btn"
+              activeOpacity={0.8}
+            >
+              <Ionicons name="images-outline" size={16} color="#fff" />
+            </TouchableOpacity>
+          )}
           {!rescanTarget && (
             <TouchableOpacity
               style={styles.flashPill}
@@ -600,6 +769,24 @@ const overlay = StyleSheet.create({
     fontSize: 11,
     textAlign: "center",
     lineHeight: 16,
+  },
+  batchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    alignSelf: "flex-start",
+    backgroundColor: "#EFF6FF",
+    borderColor: "#BFDBFE",
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  batchText: {
+    color: "#1E40AF",
+    fontWeight: "900",
+    fontSize: 11,
+    letterSpacing: 0.5,
   },
 });
 
