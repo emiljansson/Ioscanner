@@ -518,9 +518,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 1,
     borderColor: "#E4E4E7",
-    shadowColor: "#000",
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
+    boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
   },
   toastText: { fontWeight: "800", color: "#09090B" },
 });

@@ -837,9 +837,8 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     fontSize: 16,
     letterSpacing: 2,
-    textShadowColor: "rgba(0,0,0,0.4)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
+    // Modern textShadow (RN ≥ 0.76 — CSS-like syntax)
+    textShadow: "0 1px 4px rgba(0,0,0,0.4)",
   },
   brandSub: { color: "#fff", opacity: 0.8, fontSize: 12, letterSpacing: 1.2 },
 
@@ -856,8 +855,10 @@ const styles = StyleSheet.create({
     borderColor: "#3B82F6",
     borderRadius: 24,
     backgroundColor: "transparent",
+    // boxShadow works cross-platform: iOS renders it as a native shadow,
+    // Android as an elevation-style shadow (no explicit elevation needed).
     ...Platform.select({
-      ios: { shadowColor: "#3B82F6", shadowOpacity: 0.5, shadowRadius: 14 },
+      ios: { boxShadow: "0 0 14px rgba(59,130,246,0.5)" },
       default: {},
     }),
   },

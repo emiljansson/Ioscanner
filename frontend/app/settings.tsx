@@ -486,10 +486,9 @@ const styles = StyleSheet.create({
   },
   speedSegOn: {
     backgroundColor: "#fff",
-    shadowColor: "#000",
-    shadowOpacity: 0.06,
-    shadowRadius: 2,
-    shadowOffset: { width: 0, height: 1 },
+    // boxShadow renders on both iOS + Android; keep elevation as a
+    // fallback for older Android surfaces that still honour it.
+    boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
     elevation: 1,
   },
   speedSegText: {
