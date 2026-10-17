@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
+import * as DocumentPicker from "expo-document-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useScans, type Scan } from "@/src/store/scans";
@@ -425,6 +426,60 @@ export default function Index() {
     showErrorAlert,
   ]);
 
+  // Shared batch pipeline for photo-library and Files imports.
+  const importUris = useCallback(
+    async (uris: string[]) => {
+      const list = uris.filter(Boolean);
+      if (list.length === 0) return;
+      setBusy(true);
+      const total = list.length;
+      let succeeded = 0;
+      const failures: string[] = [];
+      try {
+        for (let i = 0; i < list.length; i++) {
+          try {
+            await processNewScanFromUri(list[i], { index: i + 1, total });
+            succeeded++;
+          } catch (e: any) {
+            const c = classifyError(e?.message ?? String(e));
+            failures.push(`Image ${i + 1}: ${c.title}`);
+            // If the error is fatal (no key / invalid key / quota) abort the
+            // rest of the batch – no point in burning through 20 attempts.
+            if (
+              c.type === "no_key" ||
+              c.type === "invalid_key" ||
+              c.type === "quota"
+            ) {
+              showErrorAlert(
+                e?.message ?? String(e),
+                `Import stopped after ${succeeded}/${total}`
+              );
+              break;
+            }
+          }
+        }
+        if (succeeded > 0) {
+          // Navigate to Pages list so the user sees all imports at once.
+          router.push("/pages");
+        }
+        if (failures.length > 0 && succeeded > 0) {
+          Alert.alert(
+            `Imported ${succeeded} of ${total}`,
+            failures.slice(0, 5).join("\n") +
+              (failures.length > 5 ? `\n…and ${failures.length - 5} more` : ""),
+            [{ text: "OK", style: "cancel" }]
+          );
+        } else if (succeeded === 0 && failures.length === total) {
+          showErrorAlert(failures[0], "Import failed");
+        }
+      } finally {
+        setBusy(false);
+        setProgress(null);
+      }
+    },
+    [processNewScanFromUri, router, showErrorAlert]
+  );
+
   const handleImport = useCallback(async () => {
     if (busy) return;
     setError(null);
@@ -452,64 +507,29 @@ export default function Index() {
         exif: false,
       });
       if (res.canceled) return;
-      const assets = res.assets ?? [];
-      if (assets.length === 0) return;
-
-      setBusy(true);
-      const total = assets.length;
-      let succeeded = 0;
-      let firstScanId: string | null = null;
-      const failures: string[] = [];
-
-      for (let i = 0; i < assets.length; i++) {
-        const uri = assets[i]?.uri;
-        if (!uri) continue;
-        try {
-          const scan = await processNewScanFromUri(uri, {
-            index: i + 1,
-            total,
-          });
-          if (!firstScanId) firstScanId = scan.id;
-          succeeded++;
-        } catch (e: any) {
-          const c = classifyError(e?.message ?? String(e));
-          failures.push(`Photo ${i + 1}: ${c.title}`);
-          // If the error is fatal (no key / invalid key / quota) abort the
-          // rest of the batch – no point in burning through 20 attempts.
-          if (
-            c.type === "no_key" ||
-            c.type === "invalid_key" ||
-            c.type === "quota"
-          ) {
-            showErrorAlert(
-              e?.message ?? String(e),
-              `Import stopped after ${succeeded}/${total}`
-            );
-            break;
-          }
-        }
-      }
-
-      if (succeeded > 0) {
-        // Navigate to Pages list so the user sees all imports at once.
-        router.push("/pages");
-      }
-      if (failures.length > 0 && succeeded > 0) {
-        // Non-blocking summary of partial failure.
-        Alert.alert(
-          `Imported ${succeeded} of ${total}`,
-          failures.slice(0, 5).join("\n") +
-            (failures.length > 5 ? `\n…and ${failures.length - 5} more` : ""),
-          [{ text: "OK", style: "cancel" }]
-        );
-      }
+      await importUris((res.assets ?? []).map((a) => a.uri));
     } catch (e: any) {
       showErrorAlert(e?.message ?? "Import failed");
-    } finally {
-      setBusy(false);
-      setProgress(null);
     }
-  }, [busy, processNewScanFromUri, router, showErrorAlert]);
+  }, [busy, importUris, showErrorAlert]);
+
+  // Pick images from the Files app (iCloud Drive, On My iPhone, OneDrive,
+  // Dropbox …). Apple's document browser needs no permission prompt.
+  const handleImportFiles = useCallback(async () => {
+    if (busy) return;
+    setError(null);
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ["image/*"],
+        multiple: true,
+        copyToCacheDirectory: true,
+      });
+      if (res.canceled) return;
+      await importUris((res.assets ?? []).slice(0, 20).map((a) => a.uri));
+    } catch (e: any) {
+      showErrorAlert(e?.message ?? "Import failed");
+    }
+  }, [busy, importUris, showErrorAlert]);
 
   // Permission states
   if (!permission) {
@@ -578,6 +598,18 @@ export default function Index() {
               activeOpacity={0.8}
             >
               <Ionicons name="images-outline" size={16} color="#fff" />
+            </TouchableOpacity>
+          )}
+          {!rescanTarget && (
+            <TouchableOpacity
+              style={styles.flashPill}
+              onPress={handleImportFiles}
+              disabled={busy}
+              testID="import-files-btn"
+              accessibilityLabel="Import images from Files"
+              activeOpacity={0.8}
+            >
+              <Ionicons name="folder-outline" size={16} color="#fff" />
             </TouchableOpacity>
           )}
           {!rescanTarget && (

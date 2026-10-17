@@ -11,7 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "se.jawel.copythat",
-      "buildNumber": "6",
+      "buildNumber": "7",
       "infoPlist": {
         "NSCameraUsageDescription": "Scan documents to extract text via AI",
         "NSPhotoLibraryUsageDescription": "Import existing photos to scan text",

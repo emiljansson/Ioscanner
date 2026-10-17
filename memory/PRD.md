@@ -94,3 +94,10 @@ sequential fill of gaps in capture order.
 - Anthropic's CORS / browser policy requires the
   `anthropic-dangerous-direct-browser-access` header; this is fine on RN native
   but may be flagged in some web environments.
+
+## Update (June 2026)
+- DONE: "Import from Files" button (folder icon, testID import-files-btn) on camera screen using expo-document-picker
+  (iCloud Drive, On My iPhone, OneDrive, Dropbox via iOS Files; images only, multiple, max 20). Shared batch pipeline `importUris`.
+- iOS buildNumber bumped 6 -> 7 (root + frontend app.json). Root package.json synced (expo-document-picker).
+- RESEARCH ONLY (not built): server-based web version, see /app/memory/WEB_SERVER_RESEARCH.md
+  (FastAPI + email OTP login, server-held AI keys, PDF upload, image cut-out, DOCX+ZIP export, iOS on server, ScanBridge scanning on Windows).
