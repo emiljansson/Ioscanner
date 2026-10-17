@@ -59,6 +59,26 @@ Status: ENDAST UTREDNING – inget byggt. Användaren svarar på svenska.
 - Befintliga alternativ: scanservjs-add-on (magicx78/ha-scanservjs-addon, sane-airscan), ha-escl-scan (wleonhardt, HACS).
 - Ersätter fas 5 (ScanBridge) om användaren väljer det.
 
+## Produktmål (runda 5)
+- Webbprogram = huvudprodukt (iOS = komplement, samma server/arkiv).
+- Flöde: in (HA-scanner/upload) -> AI-OCR -> digitalt dokument (redigerbart, sökbart arkiv) -> bearbeta med FRI AI-instruktion.
+- Material: kurs- och studiematerial. Utdata: Word (.docx) med bilder + ZIP.
+
+## Kurs-/studiematerial – särskilda krav
+- Matteformler: OCR till LaTeX -> Word-ekvationer (OMML) via Pandoc (Markdown+LaTeX+bilder -> .docx med äkta ekvationer, rubriker, tabeller).
+- Tabeller -> riktiga Word-tabeller. Diagram/figurer -> utklippta bilder med bildtext.
+- Flerspaltig layout, sidhuvud/sidfot/sidnummer bort, markeringar/understrykningar, handskrivna anteckningar i marginal (flagga).
+- Dokumentstruktur: Kurs -> Dokument -> Sidor (sidordning via befintlig ORGANIZE-logik).
+- Fri AI-instruktion på valda sidor/hela dokument/flera dokument; resultat = nytt dokument (versioner, original orört).
+  Sparade egna instruktionsmallar. Långa dokument: modeller med stor kontext (Gemini) eller kapitelvis bearbetning.
+
+## NAPS2 som motor (runda 6)
+- NAPS2 har inget REST-API, men NAPS2.Console.exe (CLI) + .NET SDK + "Scanner Sharing" (eSCL-server, 8.2+ även med NAPS2 stängt).
+- CLI: naps2.console -o out.pdf --noprofile --driver wia|escl --device "3302" --source duplex --dpi 300 -f
+- Förslag: PowerShell-skript scan -> curl.exe upload till CopyThat /api med personlig API-token.
+  Trigger: genväg/snabbtangent, Aktivitetsschemaläggaren, eller Home Assistant via HASS.Agent (kör kommando på Windows).
+- Kräver i CopyThat: uppladdnings-endpoint + personliga API-tokens (fas 1/2).
+
 ## Faser (förslag)
 1. Backend + inloggning + servernycklar + porterad AI-logik
 2. Webb-UI: uppladdning (bilder + PDF), bred layout, historik
