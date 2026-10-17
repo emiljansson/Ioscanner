@@ -50,6 +50,15 @@ Status: ENDAST UTREDNING – inget byggt. Användaren svarar på svenska.
 - Inloggning: engångskod via e-post (Emergent-hanterad Resend, ingen nyckel behövs).
 - Fortfarande utredning – användaren bad om krav + omfattning (levererat i chatten).
 
+## Scanner via Home Assistant (runda 4)
+- Användarens scanner: HP Color LaserJet Pro MFP 3302 (WIA + eSCL/AirScan, ADF 50 ark, duplex). Testad OK med NAPS2 på Windows.
+- Användaren vill ha scannermotorn på sin Home Assistant i stället för Windows.
+- Förslag: egen HA-add-on "CopyThat Scanner" (Docker + Python) som pratar eSCL direkt med HP:n (HTTP på lokalt nät),
+  kopplar UT mot CopyThat-servern (ingen portöppning), hämtar scanjobb, scannar ADF/duplex, laddar upp sidor.
+  Trigger: Scanna-knapp i webb/iOS, HA-dashboardknapp/automation.
+- Befintliga alternativ: scanservjs-add-on (magicx78/ha-scanservjs-addon, sane-airscan), ha-escl-scan (wleonhardt, HACS).
+- Ersätter fas 5 (ScanBridge) om användaren väljer det.
+
 ## Faser (förslag)
 1. Backend + inloggning + servernycklar + porterad AI-logik
 2. Webb-UI: uppladdning (bilder + PDF), bred layout, historik
