@@ -1,7 +1,7 @@
 // iPhone capture: camera, photo library and Files → uploads straight to the server document.
 import React, { useRef, useState } from "react";
-import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { ActivityIndicator, Linking, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as ImagePicker from "expo-image-picker";
@@ -20,6 +20,11 @@ export default function Capture() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [docId, setDocId] = useState<string | null>(doc ?? null);
+  const insets = useSafeAreaInsets();
+  // Full-screen modals can report 0 insets on first render on iOS; never go under the status bar / Dynamic Island.
+  const topInset = Platform.OS === "ios" ? Math.max(insets.top, 54) : insets.top;
+  const { width } = useWindowDimensions();
+  const frameW = Math.min(width - 24 - 48, 420);
 
   const target = async () => {
     if (docId) return docId;
@@ -72,47 +77,70 @@ export default function Capture() {
 
   return (
     <View style={styles.root}>
-      {perm?.granted ? <CameraView ref={cam} style={StyleSheet.absoluteFill} facing="back" /> : permissionView}
-      <SafeAreaView style={styles.overlay} pointerEvents="box-none">
-        <View style={styles.top}>
-          <Pressable onPress={done} style={styles.round} accessibilityLabel="Stäng" testID="capture-close">
-            <Ionicons name="close" size={24} color={colors.primaryText} />
-          </Pressable>
-          <View style={styles.counter}>
-            {busy && <ActivityIndicator color={colors.primaryText} size="small" />}
-            <Text style={styles.counterText}>{sent} skickade</Text>
-          </View>
-          <Pressable onPress={done} style={styles.doneBtn} accessibilityLabel="Klar">
-            <Text style={styles.doneText}>Klar</Text>
-          </Pressable>
+      <View style={[styles.top, { paddingTop: topInset + 8 }]}>
+        <Pressable onPress={done} style={styles.round} accessibilityLabel="Stäng" testID="capture-close">
+          <Ionicons name="close" size={24} color={colors.primaryText} />
+        </Pressable>
+        <View style={styles.counter}>
+          {busy && <ActivityIndicator color={colors.primaryText} size="small" />}
+          <Text style={styles.counterText}>{sent} skickade</Text>
         </View>
-        {err && <Text style={styles.err}>{err}</Text>}
-        <View style={styles.bottom}>
-          <Pressable onPress={library} style={styles.round} accessibilityLabel="Välj från bildbiblioteket">
-            <Ionicons name="images-outline" size={24} color={colors.primaryText} />
-          </Pressable>
-          <Pressable onPress={shoot} disabled={!perm?.granted} style={[styles.shutter, !perm?.granted && { opacity: 0.3 }]} accessibilityLabel="Ta bild">
-            <View style={styles.shutterInner} />
-          </Pressable>
-          <Pressable onPress={async () => send(await pickFiles())} style={styles.round} accessibilityLabel="Välj från Filer">
-            <Ionicons name="folder-outline" size={24} color={colors.primaryText} />
-          </Pressable>
-        </View>
-      </SafeAreaView>
+        <Pressable onPress={done} style={styles.doneBtn} accessibilityLabel="Klar" testID="capture-done">
+          <Text style={styles.doneText}>Klar</Text>
+        </Pressable>
+      </View>
+      <View style={styles.viewport}>
+        {perm?.granted ? (
+          <>
+            <CameraView ref={cam} style={StyleSheet.absoluteFill} facing="back" />
+            <View style={styles.frameWrap} pointerEvents="none">
+              <View style={[styles.frame, { width: frameW, height: frameW * 1.414 }]}>
+                <View style={[styles.corner, styles.tl]} />
+                <View style={[styles.corner, styles.tr]} />
+                <View style={[styles.corner, styles.bl]} />
+                <View style={[styles.corner, styles.br]} />
+              </View>
+              <Text style={styles.frameHint}>Placera sidan inom ramen</Text>
+            </View>
+          </>
+        ) : (
+          permissionView
+        )}
+      </View>
+      {err && <Text style={styles.err}>{err}</Text>}
+      <View style={[styles.bottom, { paddingBottom: Math.max(insets.bottom, 16) + 8 }]}>
+        <Pressable onPress={library} style={styles.round} accessibilityLabel="Välj från bildbiblioteket">
+          <Ionicons name="images-outline" size={24} color={colors.primaryText} />
+        </Pressable>
+        <Pressable onPress={shoot} disabled={!perm?.granted || busy} style={[styles.shutter, (!perm?.granted || busy) && { opacity: 0.3 }]} accessibilityLabel="Ta bild" testID="capture-shutter">
+          <View style={styles.shutterInner} />
+        </Pressable>
+        <Pressable onPress={async () => send(await pickFiles())} style={styles.round} accessibilityLabel="Välj från Filer">
+          <Ionicons name="folder-outline" size={24} color={colors.primaryText} />
+        </Pressable>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.text },
-  overlay: { flex: 1, justifyContent: "space-between" },
-  top: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16 },
+  top: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingBottom: 12 },
+  viewport: { flex: 1, marginHorizontal: 12, borderRadius: radius.lg, overflow: "hidden", backgroundColor: colors.overlay },
+  frameWrap: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", gap: 12 },
+  frame: { maxHeight: "85%", borderWidth: 1, borderColor: "rgba(255,255,255,0.45)", borderRadius: 4 },
+  corner: { position: "absolute", width: 28, height: 28, borderColor: colors.primaryText },
+  tl: { top: -2, left: -2, borderTopWidth: 4, borderLeftWidth: 4, borderTopLeftRadius: 6 },
+  tr: { top: -2, right: -2, borderTopWidth: 4, borderRightWidth: 4, borderTopRightRadius: 6 },
+  bl: { bottom: -2, left: -2, borderBottomWidth: 4, borderLeftWidth: 4, borderBottomLeftRadius: 6 },
+  br: { bottom: -2, right: -2, borderBottomWidth: 4, borderRightWidth: 4, borderBottomRightRadius: 6 },
+  frameHint: { color: colors.primaryText, fontSize: 14, fontWeight: "600", backgroundColor: colors.overlay, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, overflow: "hidden" },
   round: { width: 52, height: 52, borderRadius: 26, backgroundColor: colors.overlay, alignItems: "center", justifyContent: "center" },
   counter: { flexDirection: "row", gap: 8, alignItems: "center", backgroundColor: colors.overlay, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 },
   counterText: { color: colors.primaryText, fontWeight: "700" },
   doneBtn: { backgroundColor: colors.primary, paddingHorizontal: 18, minHeight: 44, borderRadius: 22, justifyContent: "center" },
   doneText: { color: colors.primaryText, fontWeight: "700", fontSize: 16 },
-  bottom: { flexDirection: "row", alignItems: "center", justifyContent: "space-around", paddingBottom: 24 },
+  bottom: { flexDirection: "row", alignItems: "center", justifyContent: "space-around", paddingTop: 16 },
   shutter: { width: 78, height: 78, borderRadius: 39, borderWidth: 4, borderColor: colors.primaryText, alignItems: "center", justifyContent: "center" },
   shutterInner: { width: 62, height: 62, borderRadius: 31, backgroundColor: colors.primaryText },
   perm: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", padding: 32, gap: 16 },

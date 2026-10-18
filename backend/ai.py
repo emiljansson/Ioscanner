@@ -43,7 +43,7 @@ VERIFY_PROMPT = "Read the image and return ONLY the verbatim text content as pla
 
 INSTRUCTION_SYSTEM = """You are a helpful study assistant. You receive study material (Markdown, may contain LaTeX math in $...$ and $$...$$, pipe tables and image references like ![caption](fig:ID)) and an instruction from the student.
 Follow the instruction and answer in Markdown. Keep math as LaTeX in $...$ / $$...$$, tables as pipe tables. You may reuse relevant image references exactly as given (![caption](fig:ID)); never invent new ones.
-Answer in the language of the material unless the instruction says otherwise. Return ONLY the resulting document, no preamble."""
+Answer in the language of the material unless the instruction says otherwise. Return ONLY the resulting document: no preamble, no title describing the task, no closing remarks, and NEVER any HTML tags (no <div>, <br>, page-break markup) – pure Markdown only."""
 
 
 class AIError(Exception):

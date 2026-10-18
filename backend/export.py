@@ -13,6 +13,12 @@ from core import db, fetch_bytes
 FIG_RE = re.compile(r"\[\[FIGURE:(\d+)\]\]")
 REF_RE = re.compile(r"!\[([^\]]*)\]\(fig:([a-f0-9]+)\)")
 PANDOC_FMT = "markdown+tex_math_dollars+pipe_tables"
+HTML_TAG_RE = re.compile(r"</?(div|span|br|p|hr|center|font)\b[^>]*>", re.I)
+
+
+def strip_html(md: str) -> str:
+    """Remove stray HTML tags (e.g. page-break divs) that AI models sometimes emit."""
+    return re.sub(r"\n{3,}", "\n\n", HTML_TAG_RE.sub("", md or "")).strip()
 
 
 def page_markdown_with_refs(page: dict) -> str:
@@ -40,6 +46,7 @@ async def document_markdown(doc: dict) -> tuple[str, dict]:
                     figmap[f["id"]] = f["url"]
             parts.append(page_markdown_with_refs(p))
         md = "\n\n".join(x for x in parts if x.strip())
+    md = strip_html(md)
     return md, figmap
 
 
@@ -57,7 +64,7 @@ async def build_files(doc: dict) -> dict:
         except Exception:
             continue
     final_md = REF_RE.sub(lambda m: f"![{m.group(1)}](images/{names[m.group(2)]})" if m.group(2) in names else "", md)
-    title = doc.get("title") or "Dokument"
+    final_md = strip_html(final_md)
 
     def _convert():
         with tempfile.TemporaryDirectory() as tmp:
@@ -69,7 +76,7 @@ async def build_files(doc: dict) -> dict:
             src.write_text(final_md, encoding="utf-8")
             out = t / "doc.docx"
             pypandoc.convert_file(str(src), "docx", format=PANDOC_FMT, outputfile=str(out),
-                                  extra_args=[f"--resource-path={tmp}", f"--metadata=title:{title}"])
+                                  extra_args=[f"--resource-path={tmp}"])
             txt = pypandoc.convert_file(str(src), "plain", format=PANDOC_FMT, extra_args=["--wrap=none"])
             return out.read_bytes(), txt
     docx, txt = await asyncio.to_thread(_convert)

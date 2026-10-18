@@ -13,7 +13,7 @@ from core import (db, new_id, now, log, current_user, require_owner, make_token,
                   TEST_LOGIN_EMAIL, TEST_LOGIN_CODE)
 from ai import MODELS, LABELS, run_instruction, AIError
 import pipeline
-from export import document_markdown, build_files, make_zip, safe_name
+from export import document_markdown, build_files, make_zip, safe_name, strip_html
 
 app = FastAPI(title="CopyThat")
 api = APIRouter(prefix="/api")
@@ -434,7 +434,7 @@ class ProcessIn(BaseModel):
 
 async def run_process(new_doc_id: str, material: str, figmap: dict, instruction: str) -> None:
     try:
-        out = await run_instruction(material, instruction, await pipeline.settings_doc())
+        out = strip_html(await run_instruction(material, instruction, await pipeline.settings_doc()))
         used = {fid: url for fid, url in figmap.items() if f"fig:{fid}" in out}
         await db.documents.update_one({"id": new_doc_id}, {"$set": {
             "markdown": out, "figures": used, "status": "ready", "updated_at": now()}})

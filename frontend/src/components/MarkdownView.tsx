@@ -24,7 +24,7 @@ function Inline({ text, style }: { text: string; style?: any }) {
 }
 
 export function MarkdownView({ markdown, figures = {} }: Props) {
-  const blocks = (markdown || "").split(/\n{2,}/);
+  const blocks = (markdown || "").replace(/<\/?(div|span|br|p|hr|center|font)\b[^>]*>/gi, "").split(/\n{2,}/);
   return (
     <View style={styles.wrap}>
       {blocks.map((block, bi) => {
