@@ -1,6 +1,6 @@
 // iPhone capture: camera, photo library and Files → uploads straight to the server document.
 import React, { useRef, useState } from "react";
-import { ActivityIndicator, Linking, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { ActivityIndicator, Image, Linking, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { CameraView, useCameraPermissions } from "expo-camera";
@@ -20,6 +20,8 @@ export default function Capture() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [docId, setDocId] = useState<string | null>(doc ?? null);
+  const [frozen, setFrozen] = useState<string | null>(null);
+  const [progress, setProgress] = useState<{ i: number; n: number } | null>(null);
   const insets = useSafeAreaInsets();
   // Full-screen modals can report 0 insets on first render on iOS; never go under the status bar / Dynamic Island.
   const topInset = Platform.OS === "ios" ? Math.max(insets.top, 54) : insets.top;
@@ -34,25 +36,43 @@ export default function Capture() {
   };
 
   const send = async (files: PickedFile[]) => {
-    if (!files.length) return;
+    if (!files.length) {
+      setBusy(false);
+      setFrozen(null);
+      return;
+    }
     setBusy(true);
     setErr(null);
     try {
       const id = await target();
-      for (const f of files) {
-        await uploadFile(id, f);
+      for (let i = 0; i < files.length; i++) {
+        setProgress({ i: i + 1, n: files.length });
+        await uploadFile(id, files[i]);
         setSent((n) => n + 1);
       }
     } catch (e: any) {
       setErr(e.message);
     } finally {
       setBusy(false);
+      setFrozen(null);
+      setProgress(null);
     }
   };
 
   const shoot = async () => {
-    const photo = await cam.current?.takePictureAsync({ quality: 0.9 });
-    if (photo?.uri) send([{ uri: photo.uri, name: `foto_${Date.now()}.jpg`, mimeType: "image/jpeg" }]);
+    if (busy) return;
+    setBusy(true); // freeze the screen immediately – taking the photo itself takes a moment
+    setProgress(null);
+    try {
+      const photo = await cam.current?.takePictureAsync({ quality: 0.9 });
+      if (!photo?.uri) throw new Error("Bilden kunde inte tas");
+      setFrozen(photo.uri);
+      await send([{ uri: photo.uri, name: `foto_${Date.now()}.jpg`, mimeType: "image/jpeg" }]);
+    } catch (e: any) {
+      setErr(e.message);
+      setBusy(false);
+      setFrozen(null);
+    }
   };
 
   const library = async () => {
@@ -119,12 +139,27 @@ export default function Capture() {
           <Ionicons name="folder-outline" size={24} color={colors.primaryText} />
         </Pressable>
       </View>
+      {busy && (
+        <View style={styles.busy} testID="capture-busy">
+          {frozen && <Image source={{ uri: frozen }} style={StyleSheet.absoluteFill} blurRadius={18} resizeMode="cover" />}
+          <View style={styles.busyDim} />
+          <ActivityIndicator size="large" color={colors.primaryText} />
+          <Text style={styles.busyTitle}>Vänta …</Text>
+          <Text style={styles.busySub}>
+            {progress ? (progress.n > 1 ? `Sparar bild ${progress.i} av ${progress.n}` : "Sparar bilden") : "Tar bilden"}
+          </Text>
+        </View>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.text },
+  busy: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", gap: 14 },
+  busyDim: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.65)" },
+  busyTitle: { color: colors.primaryText, fontSize: 30, fontWeight: "800" },
+  busySub: { color: colors.primaryText, fontSize: 16, opacity: 0.9 },
   top: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingBottom: 12 },
   viewport: { flex: 1, marginHorizontal: 12, borderRadius: radius.lg, overflow: "hidden", backgroundColor: colors.overlay },
   frameWrap: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", gap: 12 },

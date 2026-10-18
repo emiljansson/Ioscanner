@@ -290,6 +290,21 @@ async def read_page(image_jpeg: bytes, settings: dict, prev_markdown: str | None
     }
 
 
+# ---------------- Page geometry (keystone) ----------------
+CORNERS_PROMPT = """This is a photo or scan of a paper page (study material). The paper background is expected to be WHITE.
+Find the four corners of the paper sheet itself (not the table or room around it).
+Return STRICT JSON: {"is_photo_of_page": <true if the sheet is photographed at an angle / with surroundings, false if it is a flat straight scan>, "corners": [[y, x], [y, x], [y, x], [y, x]]}
+Corners in order top-left, top-right, bottom-right, bottom-left, normalized 0-1000 (y first). If the sheet fills the whole image, return the image corners."""
+
+
+async def detect_page_corners(image_jpeg: bytes, settings: dict) -> list | None:
+    keys = await get_ai_keys()
+    provider = "gemini" if keys.get("gemini") else pick_primary(settings, keys)
+    data = strip_json(await call_ai(provider, MODELS[provider]["fast"], CORNERS_PROMPT, image_jpeg,
+                                    TIMEOUTS["fast"], want_json=True))
+    return data.get("corners") if data.get("is_photo_of_page") else None
+
+
 # ---------------- Object cutting (bildstöd) ----------------
 FIGURE_PROMPT = """You are cutting out images from a scanned school/study page so they can be reused as picture support (bildstöd) when the material is rewritten.
 Identify EVERY visual object on the page and return each one as a SEPARATE object: photos, illustrations, drawings, pictograms/symbols next to words (bildstöd), icons, mascots/animal drawings, diagrams, charts, maps, logos/badges.

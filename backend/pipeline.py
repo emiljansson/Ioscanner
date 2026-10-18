@@ -8,8 +8,9 @@ import pymupdf
 from PIL import Image, ImageOps
 from pillow_heif import register_heif_opener
 
-from core import db, new_id, now, commhub_upload, fetch_bytes, log
-from ai import read_page, detect_figures, merge_figures, AIError
+from core import db, new_id, now, commhub_upload, commhub_delete, fetch_bytes, log
+from ai import read_page, detect_figures, merge_figures, detect_page_corners, AIError
+from imaging import correct_page, correct_crop
 
 register_heif_opener()
 
@@ -102,7 +103,7 @@ async def crop_and_store(full: bytes, page_id: str, box: list[float]) -> dict | 
             if not rect:
                 return None
             buf = io.BytesIO()
-            im.convert("RGB").crop(rect).save(buf, "JPEG", quality=92)
+            correct_crop(im, rect).save(buf, "JPEG", quality=92)
             return buf.getvalue()
     data = await asyncio.to_thread(_do)
     if not data:
@@ -197,10 +198,28 @@ async def process_page(page_id: str, rescan: bool = False) -> None:
                                                              "started_at": now()}})
         try:
             full = await page_image(page)
+            settings = await settings_doc()
+            if not page.get("corrected"):
+                # First pass on this page: straighten (keystone) and colour-correct on white paper.
+                try:
+                    with Image.open(io.BytesIO(full)) as im:
+                        probe = _jpeg(im.convert("RGB"), 1200, 80)
+                    corners = await detect_page_corners(probe, settings)
+                except Exception as e:
+                    log.warning("corner detection failed for %s: %s", page_id, e)
+                    corners = None
+                full, _ = await asyncio.to_thread(correct_page, full, corners)
+                stored = await commhub_upload(full, f"{page_id}_c.jpg", "image/jpeg", "images")
+                with Image.open(io.BytesIO(full)) as im:
+                    w, h = im.size
+                (CACHE / f"{page_id}.jpg").write_bytes(full)
+                await commhub_delete(page.get("image_file_id"))
+                await db.pages.update_one({"id": page_id}, {"$set": {
+                    "image_url": stored["url"], "image_file_id": stored["id"], "width": w, "height": h,
+                    "corrected": True, "keystone": bool(corners)}})
             with Image.open(io.BytesIO(full)) as im:
                 ai_jpg = _jpeg(im.convert("RGB"), 2000, 85)
             attempts = page.get("attempts", 0) + 1
-            settings = await settings_doc()
             res = await read_page(ai_jpg, settings,
                                   prev_markdown=page["markdown"] if rescan and page.get("markdown") else None,
                                   attempts=attempts, prev_conf=page.get("confidence") or 0)
