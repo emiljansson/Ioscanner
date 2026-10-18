@@ -12,7 +12,7 @@ from starlette.middleware.cors import CORSMiddleware
 from core import (db, new_id, now, log, current_user, require_owner, make_token, get_ai_keys,
                   commhub_request_otp, commhub_verify_otp, commhub_delete, commhub_upload, commhub_send_email, OWNER_EMAIL,
                   TEST_LOGIN_EMAIL, TEST_LOGIN_CODE)
-from ai import MODELS, LABELS, run_instruction, AIError
+from ai import MODELS, LABELS, run_instruction, AIError, model_for, list_models
 import pipeline
 from export import document_markdown, build_files, make_zip, safe_name, strip_html
 
@@ -115,9 +115,16 @@ async def remove_user(user_id: str, user: dict = Depends(current_user)):
 
 
 # ---------------- Settings ----------------
+class ModelOverride(BaseModel):
+    provider: str
+    mode: str
+    model: str | None = None  # None = back to the default
+
+
 class SettingsIn(BaseModel):
     speed_mode: str | None = None
     primary_provider: str | None = None
+    model_override: ModelOverride | None = None
 
 
 @api.get("/settings")
@@ -127,7 +134,8 @@ async def get_settings(user: dict = Depends(current_user)):
     return {
         "speed_mode": s.get("speed_mode", "fast"),
         "primary_provider": s.get("primary_provider", "gemini"),
-        "providers": [{"id": p, "label": LABELS[p], "has_key": bool(keys.get(p)), "models": MODELS[p]}
+        "providers": [{"id": p, "label": LABELS[p], "has_key": bool(keys.get(p)),
+                       "models": {m: model_for(p, m, s) for m in MODELS[p]}, "default_models": MODELS[p]}
                       for p in MODELS],
         "is_owner": user.get("role") == "owner",
     }
@@ -141,8 +149,34 @@ async def put_settings(body: SettingsIn, user: dict = Depends(current_user)):
         upd["speed_mode"] = body.speed_mode
     if body.primary_provider in MODELS:
         upd["primary_provider"] = body.primary_provider
-    await db.settings.update_one({"id": "global"}, {"$set": upd}, upsert=True)
+    unset = {}
+    o = body.model_override
+    if o and o.provider in MODELS and o.mode in MODELS[o.provider]:
+        field = f"model_overrides.{o.provider}.{o.mode}"
+        if o.model and o.model != MODELS[o.provider][o.mode]:
+            if not re.match(r"^[\w.\-:]{2,80}$", o.model):
+                raise HTTPException(400, "Ogiltigt modellnamn")
+            upd[field] = o.model
+        else:
+            unset[field] = ""
+    ops = {k: v for k, v in (("$set", upd), ("$unset", unset)) if v}
+    if ops:
+        await db.settings.update_one({"id": "global"}, ops, upsert=True)
     return await get_settings(user)
+
+
+@api.get("/settings/models/{provider}")
+async def available_models(provider: str, user: dict = Depends(current_user)):
+    require_owner(user)
+    if provider not in MODELS:
+        raise HTTPException(404, "Okänd AI-tjänst")
+    try:
+        return {"models": await list_models(provider)}
+    except AIError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        log.warning("list models %s failed: %s", provider, e)
+        raise HTTPException(502, f"Kunde inte hämta modellerna från {LABELS[provider]}")
 
 
 # ---------------- Courses ----------------

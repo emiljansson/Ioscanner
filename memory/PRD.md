@@ -48,3 +48,4 @@ templates, settings{id:"global",speed_mode,primary_provider}, uploads.
 - Delete fix: archive reloads docs on focus; doc delete guarded against double tap (404 = success); page delete optimistic; course delete removes immediately.
 - PDF styled like Word: bundled Carlito fonts (backend/fonts, Calibri-metric), 12pt body, headings #0F4761 20/16/14pt, A4 2.54cm margins.
 - Settings: 'Mejla skriptet till mig' (POST /api/scanner/script/email?base=) for iPhone users; script stored in CommHub, link emailed.
+- Model picker: owner taps model name in Settings > AI-tjänster -> ModelPicker lists live models (GET /api/settings/models/{provider}); PUT /settings {model_override:{provider,mode,model|null}} stored in settings.model_overrides; ai.model_for() used everywhere.

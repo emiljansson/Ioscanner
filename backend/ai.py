@@ -14,6 +14,42 @@ MODELS = {
     "anthropic": {"fast": "claude-haiku-4-5", "balanced": "claude-sonnet-4-5", "best": "claude-sonnet-4-5"},
 }
 LABELS = {"openai": "OpenAI", "gemini": "Gemini", "anthropic": "Claude"}
+
+
+def model_for(provider: str, mode: str, settings: dict) -> str:
+    """The owner can pin a specific model per provider and reading mode (settings.model_overrides)."""
+    return ((settings.get("model_overrides") or {}).get(provider) or {}).get(mode) or MODELS[provider][mode]
+
+
+EXCLUDE_RE = re.compile(r"embed|tts|audio|realtime|transcribe|image|imagen|veo|live|search|moderation|dall-e|whisper|"
+                        r"computer-use|robotics|aqa|learnlm|native|codex|instruct|babbage|davinci|banana|-\d{4}-\d{2}-\d{2}$", re.I)
+
+
+async def list_models(provider: str) -> list[str]:
+    """Models the provider currently offers for this API key (text+vision chat models only)."""
+    key = (await get_ai_keys()).get(provider)
+    if not key:
+        raise AIError(f"Nyckel saknas för {LABELS[provider]}")
+    async with httpx.AsyncClient(timeout=20) as c:
+        if provider == "gemini":
+            r = await c.get("https://generativelanguage.googleapis.com/v1beta/models", params={"key": key, "pageSize": 1000})
+            r.raise_for_status()
+            ids = [m["name"].removeprefix("models/") for m in r.json().get("models", [])
+                   if "generateContent" in m.get("supportedGenerationMethods", [])]
+            ids = [i for i in ids if i.startswith("gemini")]
+        elif provider == "openai":
+            r = await c.get("https://api.openai.com/v1/models", headers={"Authorization": f"Bearer {key}"})
+            r.raise_for_status()
+            ids = [m["id"] for m in r.json().get("data", []) if re.match(r"^(gpt-[4-9]|o\d)", m["id"])]
+        else:
+            r = await c.get("https://api.anthropic.com/v1/models", params={"limit": 100},
+                            headers={"x-api-key": key, "anthropic-version": "2023-06-01"})
+            r.raise_for_status()
+            ids = [m["id"] for m in r.json().get("data", [])]
+    ids = sorted({i for i in ids if not EXCLUDE_RE.search(i)}, reverse=True)
+    return sorted(ids, key=lambda i: not i.startswith(("gpt", "gemini-", "claude")))  # main families first
+
+
 TIMEOUTS = {"fast": 90, "balanced": 150, "best": 240}
 
 OCR_PROMPT = """You are an expert OCR engine for STUDY MATERIAL (textbooks, compendiums, lecture notes, exercise sheets) in Swedish or English.
@@ -241,11 +277,11 @@ async def read_page(image_jpeg: bytes, settings: dict, prev_markdown: str | None
     timeout = TIMEOUTS[mode]
 
     async def primary_call():
-        raw = await call_ai(primary, MODELS[primary][mode], prompt, image_jpeg, timeout, want_json=True)
+        raw = await call_ai(primary, model_for(primary, mode, settings), prompt, image_jpeg, timeout, want_json=True)
         return strip_json(raw)
 
     async def verify_call(p):
-        return await call_ai(p, MODELS[p]["fast"], VERIFY_PROMPT, image_jpeg, TIMEOUTS["fast"], want_json=False)
+        return await call_ai(p, model_for(p, "fast", settings), VERIFY_PROMPT, image_jpeg, TIMEOUTS["fast"], want_json=False)
 
     results = await asyncio.gather(primary_call(), *[verify_call(p) for p in verifiers], return_exceptions=True)
     main = results[0]
@@ -284,7 +320,7 @@ async def read_page(image_jpeg: bytes, settings: dict, prev_markdown: str | None
         "page_number": pn if isinstance(pn, int) else None,
         "figures": figures,
         "provider": primary,
-        "model": MODELS[primary][mode],
+        "model": model_for(primary, mode, settings),
         "mode": mode,
         "verifiers": ran,
     }
@@ -300,7 +336,7 @@ Corners in order top-left, top-right, bottom-right, bottom-left, normalized 0-10
 async def detect_page_corners(image_jpeg: bytes, settings: dict) -> list | None:
     keys = await get_ai_keys()
     provider = "gemini" if keys.get("gemini") else pick_primary(settings, keys)
-    data = strip_json(await call_ai(provider, MODELS[provider]["fast"], CORNERS_PROMPT, image_jpeg,
+    data = strip_json(await call_ai(provider, model_for(provider, "fast", settings), CORNERS_PROMPT, image_jpeg,
                                     TIMEOUTS["fast"], want_json=True))
     return data.get("corners") if data.get("is_photo_of_page") else None
 
@@ -321,7 +357,7 @@ async def detect_figures(image_jpeg: bytes, settings: dict) -> list[dict]:
     """Dedicated object-cutting pass (Gemini preferred – best at spatial boxes)."""
     keys = await get_ai_keys()
     provider = "gemini" if keys.get("gemini") else pick_primary(settings, keys)
-    raw = await call_ai(provider, MODELS[provider]["fast"], FIGURE_PROMPT, image_jpeg, TIMEOUTS["fast"], want_json=True)
+    raw = await call_ai(provider, model_for(provider, "fast", settings), FIGURE_PROMPT, image_jpeg, TIMEOUTS["fast"], want_json=True)
     out = []
     for i, f in enumerate(strip_json(raw).get("figures") or [], 1):
         box = f.get("box_2d")
@@ -373,10 +409,10 @@ async def run_instruction(material: str, instruction: str, settings: dict) -> st
     keys = await get_ai_keys()
     # Long material: Gemini Pro handles very long context in one go.
     if len(material) > CHUNK_CHARS and keys.get("gemini"):
-        provider, model = "gemini", MODELS["gemini"]["balanced"]
+        provider, model = "gemini", model_for("gemini", "balanced", settings)
     else:
         provider = pick_primary(settings, keys)
-        model = MODELS[provider]["balanced"]
+        model = model_for(provider, "balanced", settings)
     chunks = [material] if provider == "gemini" or len(material) <= CHUNK_CHARS else [
         material[i:i + CHUNK_CHARS] for i in range(0, len(material), CHUNK_CHARS)]
     outs = []

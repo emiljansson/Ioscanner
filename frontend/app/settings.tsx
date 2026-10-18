@@ -6,13 +6,14 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api, API_URL, getToken, type Course, type Template, type User } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { ModelPicker } from "@/src/components/ModelPicker";
 import { Button } from "@/src/components/ui";
 import { colors, radius } from "@/src/theme";
 
 type Settings = {
   speed_mode: "fast" | "balanced" | "best";
   primary_provider: string;
-  providers: { id: string; label: string; has_key: boolean; models: Record<string, string> }[];
+  providers: { id: string; label: string; has_key: boolean; models: Record<string, string>; default_models: Record<string, string> }[];
   is_owner: boolean;
 };
 
@@ -35,6 +36,7 @@ export default function SettingsScreen() {
   const [scanner, setScanner] = useState<Scanner | null>(null);
   const [courses, setCourses] = useState<Course[]>([]);
   const [copied, setCopied] = useState(false);
+  const [picking, setPicking] = useState<Settings["providers"][number] | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -52,7 +54,7 @@ export default function SettingsScreen() {
     load();
   }, [load]);
 
-  const update = async (body: Partial<Settings>) => {
+  const update = async (body: Partial<Settings> | { model_override: { provider: string; mode: string; model: string | null } }) => {
     try {
       setS(await api<Settings>("/settings", { method: "PUT", body }));
     } catch (e: any) {
@@ -137,18 +139,39 @@ export default function SettingsScreen() {
 
         <View style={styles.card}>
           <Text style={styles.h2}>AI-tjänster</Text>
-          <Text style={styles.muted}>Nycklarna finns bara på servern och visas aldrig här. Gemini rekommenderas som huvud-AI, eftersom den är bäst på att hitta bilder.</Text>
+          <Text style={styles.muted}>Nycklarna finns bara på servern och visas aldrig här. Gemini rekommenderas som huvud-AI, eftersom den är bäst på att hitta bilder. Tryck på modellnamnet för att välja version för läget {MODES.find((m) => m.id === s.speed_mode)?.label}.</Text>
           {s.providers.map((p) => (
             <Pressable key={p.id} testID={`provider-${p.id}`} disabled={!s.is_owner} onPress={() => update({ primary_provider: p.id })} style={[styles.option, s.primary_provider === p.id && styles.optionActive]}>
               <Ionicons name={s.primary_provider === p.id ? "radio-button-on" : "radio-button-off"} size={20} color={colors.primary} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.optLabel}>{p.label}{s.primary_provider === p.id ? " · huvud-AI" : ""}</Text>
-                <Text style={styles.muted}>{p.models[s.speed_mode]}</Text>
+                {s.is_owner && p.has_key ? (
+                  <Pressable testID={`model-pick-${p.id}`} onPress={() => setPicking(p)} style={styles.modelBtn} accessibilityLabel={`Välj modell för ${p.label}`}>
+                    <Text style={styles.modelText} numberOfLines={1}>{p.models[s.speed_mode]}</Text>
+                    <Ionicons name="chevron-down" size={14} color={colors.primary} />
+                  </Pressable>
+                ) : (
+                  <Text style={styles.muted}>{p.models[s.speed_mode]}</Text>
+                )}
               </View>
               <Text style={[styles.pill, p.has_key ? styles.pillOk : styles.pillMissing]}>{p.has_key ? "Nyckel finns" : "Nyckel saknas"}</Text>
             </Pressable>
           ))}
         </View>
+
+        {picking && (
+          <ModelPicker
+            provider={picking}
+            modeLabel={MODES.find((m) => m.id === s.speed_mode)?.label ?? ""}
+            current={picking.models[s.speed_mode]}
+            defaultModel={picking.default_models[s.speed_mode]}
+            onClose={() => setPicking(null)}
+            onPick={async (model) => {
+              setPicking(null);
+              await update({ model_override: { provider: picking.id, mode: s.speed_mode, model } });
+            }}
+          />
+        )}
 
         {s.is_owner && (
           <View style={styles.card}>
@@ -261,6 +284,8 @@ const styles = StyleSheet.create({
   chipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipText: { fontSize: 14, fontWeight: "600", color: colors.text },
   key: { flex: 1, fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), fontSize: 13, color: colors.text, backgroundColor: colors.bg, borderRadius: radius.sm, paddingHorizontal: 10, paddingVertical: 8 },
+  modelBtn: { flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start", minHeight: 32, marginTop: 2 },
+  modelText: { fontSize: 14, color: colors.primary, fontWeight: "600", textDecorationLine: "underline" },
   ok: { padding: 12, color: colors.ok, backgroundColor: colors.okSoft, borderRadius: radius.md },
   err: { padding: 12, color: colors.danger, backgroundColor: colors.dangerSoft, borderRadius: radius.md },
 });
