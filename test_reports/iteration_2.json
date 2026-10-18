@@ -1,0 +1,43 @@
+{
+  "summary": "First end-to-end test of CopyThat (CopyThat Webb). Backend: 34/34 pytest tests pass against the public EXPO_PUBLIC_BACKEND_URL covering auth (allowlist 403, wrong code 401, test code 246810 ok, /auth/me, no _id leaks), ownership isolation (404 for unknown ids), courses CRUD, documents CRUD, inbox idempotency, chunked upload (PNG, 2-page PDF, invalid file 422), page markdown PATCH, delete, rescan, reorder, sort, figures (POST crop/PATCH deleted/PATCH recrop), templates (4 seeds + create/delete), search (title match + <2 chars), /process (empty 422 + full flow ending in 'error' with Swedish AI-nyckel saknas as expected), docx/zip/txt export via ?token= on a seeded done page, admin+settings PUT 403 for member. Frontend web preview (1366x860 and 390x844): login flow (403/401/ok) works, archive sidebar, course creation, document creation, document screen toolbar (Lägg till material/Bearbeta med AI/Word/ZIP/Kopiera text), upload-btn opens native file chooser (multi), ai-open panel shows 4 templates and instruction textarea, settings screen shows Snabb/Balanserad/Bäst modes and three AI providers all with 'Nyckel saknas', Logga ut button visible. No red screens. All existing testIDs match the review request.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/test_backend.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "No fixes required - all tested behavior matches the spec. When AI keys get configured, re-run OCR/process tests to verify success paths beyond the current 'error with AI-nyckel saknas' expected state.",
+    "Minor polish idea (not a bug): pipeline.enqueue uses asyncio.get_event_loop() which is deprecated in Python 3.12+. Current 3.11 runtime is fine; consider asyncio.get_running_loop() when upgrading."
+  ],
+  "critical_code_review_comments": [
+    "server.py is ~600 lines - still manageable but close to the 700-line threshold; consider splitting pages/figures and auth/admin into submodules if it grows.",
+    "crop_and_store blocking PIL work is correctly offloaded via asyncio.to_thread.",
+    "Mongo _id is uniformly stripped via projection {'_id': 0} and the clean() helper - verified zero leaks across 34 tests.",
+    "Ownership check own() returns 404 (not 403) for other-user ids - consistent and tested.",
+    "Export endpoint accepts token via query (?token=) in addition to Authorization header - needed for browser downloads; verified 401 when neither provided.",
+    "Default Mongo index on documents.updated_at would speed up list_documents when docs grow; not needed yet."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py (new)",
+    "/app/backend/tests/test_backend.py (new, 34 tests)"
+  ],
+  "success_rate": {
+    "backend": "100% (34/34)",
+    "frontend": "100% of requested flows (login 403/401/ok, archive sidebar, create course/doc, doc toolbar incl upload-btn opens file chooser, ai-open templates+instruction, settings modes+providers+Nyckel saknas, logout) on 1366x860 and 390x844"
+  },
+  "seed_data_creation": "Pytest run creates TEST_* prefixed courses/documents and cleans them up on teardown. Two pages are seeded directly in mongo (collection 'pages', status 'done', markdown present) for the /process and /export tests, then removed. The browser session also created TEST_UIKurs/TEST_UIDoc which can be deleted via the Archive trash icon - not blocking.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Reusable pytest suite is /app/backend/tests/test_backend.py. It reads EXPO_PUBLIC_BACKEND_URL from /app/frontend/.env and TEST_LOGIN_EMAIL/CODE from /app/backend/.env. Takes ~30s to run cold. /process and OCR flows end in status='error' with Swedish message 'Gemini: AI-nyckel saknas på servern' - this is expected until AI keys are configured. For UI testing, use the mobile-first browser automation; testIDs are already consistent: login-email, login-send-code, login-code, login-verify, login-error, search-input, new-course-input, new-course-btn, course-<id>, new-doc-input, new-doc-btn, doc-<id>, upload-btn, ai-open, open-settings. CommHub file storage is real so uploads consume quota.",
+  "rca_of_issue": "N/A - no bugs found. Two test-authoring issues during initial run were fixed in-place: (1) a shadowed loop variable in test_add_figure_and_toggle caused a GET to wrong doc id (fixed by renaming to `did`); (2) txt export is only 28 bytes for a tiny markdown page so the >50 size assertion was too strict and was reduced to >10 for txt while keeping >500 for docx/zip. Final run: 34/34 green."
+}

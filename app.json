@@ -2,7 +2,7 @@
   "expo": {
     "name": "CopyThat",
     "slug": "copythat",
-    "version": "1.4.0",
+    "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "copythat",
@@ -11,7 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "se.jawel.copythat",
-      "buildNumber": "7",
+      "buildNumber": "8",
       "infoPlist": {
         "NSCameraUsageDescription": "Scan documents to extract text via AI",
         "NSPhotoLibraryUsageDescription": "Import existing photos to scan text",

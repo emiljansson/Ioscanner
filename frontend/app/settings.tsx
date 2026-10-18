@@ -1,633 +1,174 @@
-import React, { useEffect, useState, useCallback } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  TextInput,
-  Alert,
-  ActivityIndicator,
-  Linking,
-  Platform,
-  KeyboardAvoidingView,
-} from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import React, { useCallback, useEffect, useState } from "react";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import {
-  PROVIDERS,
-  ProviderId,
-  SpeedMode,
-  getActiveProvider,
-  setActiveProvider,
-  getApiKey,
-  setApiKey,
-  getVerifier,
-  setVerifier,
-  getSpeedMode,
-  setSpeedMode,
-  maskKey,
-} from "@/src/lib/aiSettings";
-import { testConnection } from "@/src/lib/ai";
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { classifyError } = require("@/src/lib/errorMessages");
+import { api, type Template, type User } from "@/src/api";
+import { useAuth } from "@/src/auth";
+import { Button } from "@/src/components/ui";
+import { colors, radius } from "@/src/theme";
 
-type Row = {
-  id: ProviderId;
-  value: string;
-  visible: boolean;
-  saving: boolean;
-  testing: boolean;
-  verify: boolean;
-  speed: SpeedMode;
-  status?: string;
-  error?: string;
+type Settings = {
+  speed_mode: "fast" | "balanced" | "best";
+  primary_provider: string;
+  providers: { id: string; label: string; has_key: boolean; models: Record<string, string> }[];
+  is_owner: boolean;
 };
 
+const MODES = [
+  { id: "fast", label: "Snabb", hint: "En AI läser sidan. Billigast." },
+  { id: "balanced", label: "Balanserad", hint: "Bättre modell + kontroll av en andra AI." },
+  { id: "best", label: "Bäst", hint: "Bästa modellen + consensus mellan alla AI:er." },
+] as const;
+
 export default function SettingsScreen() {
-  const insets = useSafeAreaInsets();
   const router = useRouter();
-  const [active, setActive] = useState<ProviderId>("openai");
-  const [rows, setRows] = useState<Row[]>(
-    PROVIDERS.map((p) => ({
-      id: p.id,
-      value: "",
-      visible: false,
-      saving: false,
-      testing: false,
-      verify: false,
-      speed: "balanced" as SpeedMode,
-    }))
-  );
-  const [loaded, setLoaded] = useState(false);
+  const { user, signOut } = useAuth();
+  const [s, setS] = useState<Settings | null>(null);
+  const [users, setUsers] = useState<User[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [invite, setInvite] = useState("");
+  const [err, setErr] = useState<string | null>(null);
 
+  const load = useCallback(async () => {
+    try {
+      const st = await api<Settings>("/settings");
+      setS(st);
+      setTemplates(await api<Template[]>("/templates"));
+      if (st.is_owner) setUsers(await api<User[]>("/admin/users"));
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  }, []);
   useEffect(() => {
-    (async () => {
-      const cur = await getActiveProvider();
-      setActive(cur);
-      const next: Row[] = [];
-      for (const p of PROVIDERS) {
-        const [v, ver, sp] = await Promise.all([
-          getApiKey(p.id),
-          getVerifier(p.id),
-          getSpeedMode(p.id),
-        ]);
-        next.push({
-          id: p.id,
-          value: v || "",
-          visible: false,
-          saving: false,
-          testing: false,
-          verify: ver,
-          speed: sp,
-        });
-      }
-      setRows(next);
-      setLoaded(true);
-    })();
-  }, []);
+    load();
+  }, [load]);
 
-  const updateRow = (id: ProviderId, patch: Partial<Row>) =>
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
-
-  const handleSave = useCallback(async (id: ProviderId, value: string) => {
-    updateRow(id, { saving: true, status: undefined, error: undefined });
+  const update = async (body: Partial<Settings>) => {
     try {
-      await setApiKey(id, value);
-      updateRow(id, { saving: false, status: value ? "Saved" : "Cleared" });
-      setTimeout(() => updateRow(id, { status: undefined }), 1500);
+      setS(await api<Settings>("/settings", { method: "PUT", body }));
     } catch (e: any) {
-      updateRow(id, { saving: false, error: e?.message ?? "Could not save" });
+      setErr(e.message);
     }
-  }, []);
+  };
 
-  const handleTest = useCallback(async (id: ProviderId, value: string) => {
-    if (!value.trim()) {
-      Alert.alert("No key", "Paste your API key first.");
-      return;
-    }
-    updateRow(id, { testing: true, status: undefined, error: undefined });
+  const doInvite = async () => {
     try {
-      // Save before testing so callProvider picks the same key
-      await setApiKey(id, value.trim());
-      // Force active to this one for test, then restore
-      const prevActive = await getActiveProvider();
-      await setActiveProvider(id);
-      try {
-        const msg = await testConnection(id, value.trim());
-        updateRow(id, { testing: false, status: msg });
-        setTimeout(() => updateRow(id, { status: undefined }), 2200);
-      } finally {
-        await setActiveProvider(prevActive);
-      }
+      await api("/admin/users", { body: { email: invite } });
+      setInvite("");
+      setUsers(await api<User[]>("/admin/users"));
     } catch (e: any) {
-      const c = classifyError(e?.message ?? "Test failed");
-      updateRow(id, { testing: false, error: c.title });
+      setErr(e.message);
     }
-  }, []);
+  };
 
-  const handleSelectActive = useCallback(async (id: ProviderId) => {
-    const row = rows.find((r) => r.id === id);
-    if (!row?.value) {
-      Alert.alert(
-        "Add a key first",
-        `Paste your ${PROVIDERS.find((p) => p.id === id)?.label} key before selecting this provider.`
-      );
-      return;
-    }
-    setActive(id);
-    await setActiveProvider(id);
-  }, [rows]);
-
-  const handleToggleVerify = useCallback(async (id: ProviderId, on: boolean) => {
-    updateRow(id, { verify: on });
-    await setVerifier(id, on);
-  }, []);
-
-  const handleSpeedChange = useCallback(async (id: ProviderId, mode: SpeedMode) => {
-    updateRow(id, { speed: mode });
-    try {
-      await setSpeedMode(id, mode);
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-  if (!loaded) {
-    return (
-      <View style={[styles.center, { paddingTop: insets.top }]}>
-        <ActivityIndicator color="#09090B" />
-      </View>
-    );
-  }
+  if (!s) return <SafeAreaView style={styles.safe}>{err ? <Text style={styles.err}>{err}</Text> : <ActivityIndicator style={{ marginTop: 48 }} color={colors.primary} />}</SafeAreaView>;
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      style={{ flex: 1, backgroundColor: "#FAFAFA" }}
-    >
-      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <TouchableOpacity
-          style={styles.iconBtn}
-          onPress={() => router.back()}
-          testID="back-btn"
-        >
-          <Ionicons name="chevron-back" size={22} color="#09090B" />
-        </TouchableOpacity>
-        <View style={{ flex: 1, alignItems: "center" }}>
-          <Text style={styles.headerTitle}>AI Settings</Text>
-          <Text style={styles.headerSub}>
-            Keys stay on this device (Keychain / Keystore)
-          </Text>
-        </View>
-        <View style={{ width: 38 }} />
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+      <View style={styles.top}>
+        <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace("/archive"))} style={styles.icon} accessibilityLabel="Tillbaka" testID="settings-back">
+          <Ionicons name="chevron-back" size={24} color={colors.text} />
+        </Pressable>
+        <Text style={styles.h1}>Inställningar</Text>
       </View>
-
-      <ScrollView
-        contentContainerStyle={{ padding: 16, gap: 16, paddingBottom: 80 }}
-        keyboardShouldPersistTaps="handled"
-      >
-        <View style={styles.infoBox}>
-          <Ionicons name="information-circle-outline" size={18} color="#3F3F46" />
-          <Text style={styles.infoText}>
-            Paste an API key for one or more providers below, then tap a card to
-            choose which one CopyThat should use for OCR. You only need one to use the app.
-          </Text>
+      <ScrollView contentContainerStyle={styles.content}>
+        {err && <Text style={styles.err}>{err}</Text>}
+        <View style={styles.card}>
+          <Text style={styles.h2}>Läsläge</Text>
+          {!s.is_owner && <Text style={styles.muted}>Endast ägaren kan ändra läsläget.</Text>}
+          {MODES.map((m) => (
+            <Pressable key={m.id} testID={`mode-${m.id}`} disabled={!s.is_owner} onPress={() => update({ speed_mode: m.id })} style={[styles.option, s.speed_mode === m.id && styles.optionActive]}>
+              <Ionicons name={s.speed_mode === m.id ? "radio-button-on" : "radio-button-off"} size={20} color={colors.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.optLabel}>{m.label}</Text>
+                <Text style={styles.muted}>{m.hint}</Text>
+              </View>
+            </Pressable>
+          ))}
         </View>
 
-        {PROVIDERS.map((p) => {
-          const row = rows.find((r) => r.id === p.id)!;
-          const isActive = active === p.id;
-          const hasKey = !!row.value;
-          return (
-            <View
-              key={p.id}
-              style={[styles.card, isActive && styles.cardActive]}
-              testID={`provider-card-${p.id}`}
-            >
-              <TouchableOpacity
-                style={styles.cardHead}
-                onPress={() => handleSelectActive(p.id)}
-                activeOpacity={0.7}
-                testID={`select-${p.id}-btn`}
-              >
-                <View style={{ flex: 1 }}>
-                  <View style={styles.cardTitleRow}>
-                    <Text style={styles.cardTitle}>{p.label}</Text>
-                    {isActive && (
-                      <View style={styles.activePill}>
-                        <Ionicons name="checkmark" size={12} color="#fff" />
-                        <Text style={styles.activePillText}>ACTIVE</Text>
-                      </View>
-                    )}
-                    {!isActive && hasKey && (
-                      <View style={styles.readyPill}>
-                        <Text style={styles.readyPillText}>READY</Text>
-                      </View>
-                    )}
-                  </View>
-                  <Text style={styles.cardHint}>{p.hint}</Text>
-                </View>
-                <View
-                  style={[
-                    styles.radioOuter,
-                    isActive && styles.radioOuterOn,
-                  ]}
-                >
-                  {isActive && <View style={styles.radioInner} />}
-                </View>
-              </TouchableOpacity>
-
-              {/* Speed mode picker: choose Fast / Balanced / Best per provider */}
-              <View style={styles.speedRow}>
-                <Text style={styles.speedLabel}>SPEED</Text>
-                <View style={styles.speedSegmented}>
-                  {(["fast", "balanced", "best"] as SpeedMode[]).map((mode) => {
-                    const selected = row.speed === mode;
-                    return (
-                      <TouchableOpacity
-                        key={mode}
-                        style={[styles.speedSeg, selected && styles.speedSegOn]}
-                        onPress={() => handleSpeedChange(p.id, mode)}
-                        activeOpacity={0.7}
-                        testID={`speed-${p.id}-${mode}`}
-                      >
-                        <Text
-                          style={[
-                            styles.speedSegText,
-                            selected && styles.speedSegTextOn,
-                          ]}
-                        >
-                          {mode === "fast" ? "Fast" : mode === "balanced" ? "Balanced" : "Best"}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
+        <View style={styles.card}>
+          <Text style={styles.h2}>AI-tjänster</Text>
+          <Text style={styles.muted}>Nycklarna finns bara på servern och visas aldrig här. Gemini rekommenderas som huvud-AI, eftersom den är bäst på att hitta bilder.</Text>
+          {s.providers.map((p) => (
+            <Pressable key={p.id} testID={`provider-${p.id}`} disabled={!s.is_owner} onPress={() => update({ primary_provider: p.id })} style={[styles.option, s.primary_provider === p.id && styles.optionActive]}>
+              <Ionicons name={s.primary_provider === p.id ? "radio-button-on" : "radio-button-off"} size={20} color={colors.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.optLabel}>{p.label}{s.primary_provider === p.id ? " · huvud-AI" : ""}</Text>
+                <Text style={styles.muted}>{p.models[s.speed_mode]}</Text>
               </View>
-              <Text style={styles.speedHint}>
-                {p.modeHints[row.speed]} · model: <Text style={{ fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }}>{p.models[row.speed]}</Text>
-              </Text>
+              <Text style={[styles.pill, p.has_key ? styles.pillOk : styles.pillMissing]}>{p.has_key ? "Nyckel finns" : "Nyckel saknas"}</Text>
+            </Pressable>
+          ))}
+        </View>
 
-              <View style={styles.keyRow}>
-                <TextInput
-                  value={row.value}
-                  onChangeText={(v) => updateRow(p.id, { value: v, error: undefined })}
-                  placeholder={`Paste ${p.label} API key (${p.keyPrefix}…)`}
-                  placeholderTextColor="#9CA3AF"
-                  style={styles.input}
-                  secureTextEntry={!row.visible}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  autoComplete="off"
-                  testID={`key-input-${p.id}`}
-                />
-                <TouchableOpacity
-                  style={styles.eyeBtn}
-                  onPress={() => updateRow(p.id, { visible: !row.visible })}
-                  testID={`toggle-visibility-${p.id}`}
-                >
-                  <Ionicons
-                    name={row.visible ? "eye-off-outline" : "eye-outline"}
-                    size={20}
-                    color="#52525B"
-                  />
-                </TouchableOpacity>
+        {s.is_owner && (
+          <View style={styles.card}>
+            <Text style={styles.h2}>Användare</Text>
+            <Text style={styles.muted}>Bara inbjudna e-postadresser kan logga in.</Text>
+            {users.map((u) => (
+              <View key={u.id} style={styles.userRow}>
+                <Ionicons name="person-circle-outline" size={22} color={colors.muted} />
+                <Text style={styles.userEmail} numberOfLines={1}>{u.email}</Text>
+                <Text style={styles.muted}>{u.role === "owner" ? "Ägare" : "Medlem"}</Text>
+                {u.role !== "owner" && (
+                  <Pressable style={styles.icon} accessibilityLabel="Ta bort användare" onPress={async () => { await api(`/admin/users/${u.id}`, { method: "DELETE" }); setUsers(await api<User[]>("/admin/users")); }}>
+                    <Ionicons name="close" size={18} color={colors.danger} />
+                  </Pressable>
+                )}
               </View>
-
-              {hasKey && !row.visible && (
-                <Text style={styles.maskedHint}>
-                  Stored: {maskKey(row.value)}
-                </Text>
-              )}
-
-              <View style={styles.actionRow}>
-                <TouchableOpacity
-                  style={[styles.actionBtn, styles.testBtn, row.testing && { opacity: 0.6 }]}
-                  onPress={() => handleTest(p.id, row.value)}
-                  disabled={row.testing || row.saving}
-                  testID={`test-${p.id}-btn`}
-                >
-                  {row.testing ? (
-                    <ActivityIndicator size="small" color="#09090B" />
-                  ) : (
-                    <>
-                      <Ionicons name="flash-outline" size={16} color="#09090B" />
-                      <Text style={styles.actionBtnText}>Test</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.actionBtn, styles.saveBtn, row.saving && { opacity: 0.6 }]}
-                  onPress={() => handleSave(p.id, row.value)}
-                  disabled={row.testing || row.saving}
-                  testID={`save-${p.id}-btn`}
-                >
-                  {row.saving ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <>
-                      <Ionicons name="save-outline" size={16} color="#fff" />
-                      <Text style={styles.saveBtnText}>
-                        {row.value ? "Save" : "Clear"}
-                      </Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              </View>
-
-              {row.status && (
-                <View style={styles.statusOk} testID={`status-${p.id}`}>
-                  <Ionicons name="checkmark-circle" size={16} color="#16A34A" />
-                  <Text style={styles.statusOkText}>{row.status}</Text>
-                </View>
-              )}
-              {row.error && (
-                <View style={styles.statusErr} testID={`error-${p.id}`}>
-                  <Ionicons name="alert-circle" size={16} color="#DC2626" />
-                  <Text style={styles.statusErrText}>{row.error}</Text>
-                </View>
-              )}
-
-              <TouchableOpacity
-                onPress={() => Linking.openURL(p.consoleUrl)}
-                style={styles.linkBtn}
-                testID={`get-key-link-${p.id}`}
-              >
-                <Ionicons name="open-outline" size={14} color="#3B82F6" />
-                <Text style={styles.linkText}>Get key from {p.label}</Text>
-              </TouchableOpacity>
-
-              {/* Verifier toggle — disabled if no key or if this is the active provider */}
-              <TouchableOpacity
-                style={[
-                  styles.verifyRow,
-                  (!hasKey || isActive) && { opacity: 0.45 },
-                ]}
-                onPress={() => {
-                  if (!hasKey || isActive) return;
-                  handleToggleVerify(p.id, !row.verify);
-                }}
-                activeOpacity={0.7}
-                testID={`verify-toggle-${p.id}`}
-                disabled={!hasKey || isActive}
-              >
-                <View
-                  style={[
-                    styles.checkBox,
-                    row.verify && hasKey && !isActive && styles.checkBoxOn,
-                  ]}
-                >
-                  {row.verify && hasKey && !isActive && (
-                    <Ionicons name="checkmark" size={14} color="#fff" />
-                  )}
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.verifyLabel}>Use for verification</Text>
-                  <Text style={styles.verifySub}>
-                    {isActive
-                      ? "This is the primary – can't verify itself."
-                      : !hasKey
-                      ? "Add a key above to enable."
-                      : "Runs in parallel and cross-checks the primary's reading."}
-                  </Text>
-                </View>
-              </TouchableOpacity>
+            ))}
+            <View style={styles.row}>
+              <TextInput testID="invite-email" style={styles.input} value={invite} onChangeText={setInvite} placeholder="E-post att bjuda in" placeholderTextColor={colors.faint} autoCapitalize="none" keyboardType="email-address" />
+              <Button testID="invite-btn" small variant="primary" label="Bjud in" onPress={doInvite} disabled={!invite.includes("@")} />
             </View>
-          );
-        })}
+          </View>
+        )}
 
-        <View style={styles.footerNote}>
-          <Ionicons name="lock-closed-outline" size={14} color="#71717A" />
-          <Text style={styles.footerNoteText}>
-            Keys are stored in the iOS Keychain / Android Keystore on your
-            device and never leave it except to call the chosen provider.
-          </Text>
+        <View style={styles.card}>
+          <Text style={styles.h2}>Sparade mallar</Text>
+          {templates.map((t) => (
+            <View key={t.id} style={styles.userRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.optLabel}>{t.name}</Text>
+                <Text style={styles.muted} numberOfLines={2}>{t.instruction}</Text>
+              </View>
+              <Pressable style={styles.icon} accessibilityLabel="Ta bort mall" onPress={async () => { await api(`/templates/${t.id}`, { method: "DELETE" }); setTemplates((x) => x.filter((y) => y.id !== t.id)); }}>
+                <Ionicons name="trash-outline" size={18} color={colors.danger} />
+              </Pressable>
+            </View>
+          ))}
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.h2}>Konto</Text>
+          <Text style={styles.muted}>Inloggad som {user?.email}</Text>
+          <Button testID="logout" label="Logga ut" variant="danger" icon="log-out-outline" onPress={signOut} style={{ alignSelf: "flex-start" }} />
         </View>
       </ScrollView>
-    </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#E4E4E7",
-    backgroundColor: "#FFFFFF",
-    gap: 8,
-  },
-  iconBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#F4F4F5",
-  },
-  headerTitle: { fontWeight: "800", fontSize: 16, color: "#09090B", letterSpacing: 0.3 },
-  headerSub: { color: "#71717A", fontSize: 11, marginTop: 1 },
-
-  infoBox: {
-    flexDirection: "row",
-    gap: 10,
-    backgroundColor: "#F4F4F5",
-    borderRadius: 14,
-    padding: 12,
-  },
-  infoText: { flex: 1, color: "#3F3F46", fontSize: 13, lineHeight: 18 },
-
-  card: {
-    backgroundColor: "#fff",
-    borderRadius: 20,
-    padding: 16,
-    borderWidth: 2,
-    borderColor: "#E4E4E7",
-    gap: 12,
-  },
-  cardActive: { borderColor: "#09090B", backgroundColor: "#FFF" },
-  cardHead: { flexDirection: "row", alignItems: "center", gap: 12 },
-  cardTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  cardTitle: { fontSize: 18, fontWeight: "900", color: "#09090B" },
-  cardModel: { color: "#52525B", fontSize: 12, marginTop: 2, fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }) },
-
-  // Speed-mode selector
-  speedRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginTop: 8,
-  },
-  speedLabel: {
-    color: "#71717A",
-    fontWeight: "900",
-    fontSize: 10,
-    letterSpacing: 1.2,
-    width: 50,
-  },
-  speedSegmented: {
-    flex: 1,
-    flexDirection: "row",
-    backgroundColor: "#F4F4F5",
-    borderRadius: 10,
-    padding: 3,
-  },
-  speedSeg: {
-    flex: 1,
-    paddingVertical: 7,
-    alignItems: "center",
-    borderRadius: 8,
-  },
-  speedSegOn: {
-    backgroundColor: "#fff",
-    // boxShadow renders on both iOS + Android; keep elevation as a
-    // fallback for older Android surfaces that still honour it.
-    boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
-    elevation: 1,
-  },
-  speedSegText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#71717A",
-  },
-  speedSegTextOn: {
-    color: "#09090B",
-    fontWeight: "900",
-  },
-  speedHint: {
-    color: "#71717A",
-    fontSize: 11,
-    marginTop: 6,
-    lineHeight: 16,
-  },
-  cardHint: { color: "#71717A", fontSize: 13, marginTop: 4, lineHeight: 18 },
-
-  activePill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    backgroundColor: "#09090B",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
-  },
-  activePillText: { color: "#fff", fontSize: 10, fontWeight: "900", letterSpacing: 1 },
-  readyPill: {
-    backgroundColor: "#D1FAE5",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
-  },
-  readyPillText: { color: "#065F46", fontSize: 10, fontWeight: "900", letterSpacing: 1 },
-
-  radioOuter: {
-    width: 24,
-    height: 24,
-    borderRadius: 24,
-    borderWidth: 2,
-    borderColor: "#A1A1AA",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  radioOuterOn: { borderColor: "#09090B" },
-  radioInner: { width: 12, height: 12, borderRadius: 12, backgroundColor: "#09090B" },
-
-  keyRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    borderWidth: 1,
-    borderColor: "#E4E4E7",
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    backgroundColor: "#FAFAFA",
-  },
-  input: {
-    flex: 1,
-    paddingVertical: 12,
-    fontSize: 14,
-    color: "#09090B",
-    fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }),
-  },
-  eyeBtn: { padding: 6 },
-  maskedHint: { color: "#71717A", fontSize: 11, marginTop: -4 },
-
-  actionRow: { flexDirection: "row", gap: 8 },
-  actionBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 12,
-    borderRadius: 12,
-  },
-  testBtn: { backgroundColor: "#F4F4F5", borderWidth: 1, borderColor: "#E4E4E7" },
-  actionBtnText: { color: "#09090B", fontWeight: "700" },
-  saveBtn: { backgroundColor: "#09090B" },
-  saveBtnText: { color: "#fff", fontWeight: "800" },
-
-  statusOk: {
-    flexDirection: "row",
-    gap: 6,
-    alignItems: "center",
-    backgroundColor: "#D1FAE5",
-    borderColor: "#A7F3D0",
-    borderWidth: 1,
-    borderRadius: 10,
-    padding: 8,
-  },
-  statusOkText: { color: "#065F46", fontWeight: "700", fontSize: 12 },
-  statusErr: {
-    flexDirection: "row",
-    gap: 6,
-    alignItems: "flex-start",
-    backgroundColor: "#FEE2E2",
-    borderColor: "#FCA5A5",
-    borderWidth: 1,
-    borderRadius: 10,
-    padding: 8,
-  },
-  statusErrText: { color: "#991B1B", fontSize: 12, flex: 1 },
-
-  linkBtn: { flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start" },
-  linkText: { color: "#3B82F6", fontSize: 12, fontWeight: "700" },
-
-  verifyRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    backgroundColor: "#F4F4F5",
-    borderRadius: 12,
-    marginTop: 4,
-  },
-  checkBox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: "#A1A1AA",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#fff",
-  },
-  checkBoxOn: { backgroundColor: "#09090B", borderColor: "#09090B" },
-  verifyLabel: { fontWeight: "800", color: "#09090B", fontSize: 14 },
-  verifySub: { color: "#71717A", fontSize: 12, marginTop: 2, lineHeight: 16 },
-
-  footerNote: {
-    flexDirection: "row",
-    gap: 8,
-    alignItems: "flex-start",
-    padding: 12,
-  },
-  footerNoteText: { flex: 1, color: "#71717A", fontSize: 12, lineHeight: 17 },
+  safe: { flex: 1, backgroundColor: colors.bg },
+  top: { flexDirection: "row", alignItems: "center", padding: 8 },
+  icon: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  h1: { fontSize: 24, fontWeight: "800", color: colors.text },
+  content: { padding: 16, gap: 16, maxWidth: 720, width: "100%", alignSelf: "center", paddingBottom: 64 },
+  card: { backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: 16, gap: 10 },
+  h2: { fontSize: 17, fontWeight: "700", color: colors.text },
+  muted: { fontSize: 13, color: colors.muted, lineHeight: 18 },
+  option: { flexDirection: "row", alignItems: "center", gap: 12, padding: 12, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, minHeight: 56 },
+  optionActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
+  optLabel: { fontSize: 15, fontWeight: "600", color: colors.text },
+  pill: { fontSize: 12, fontWeight: "700", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, overflow: "hidden" },
+  pillOk: { backgroundColor: colors.okSoft, color: colors.ok },
+  pillMissing: { backgroundColor: colors.warnSoft, color: colors.warn },
+  userRow: { flexDirection: "row", alignItems: "center", gap: 10, minHeight: 44 },
+  userEmail: { flex: 1, fontSize: 15, color: colors.text },
+  row: { flexDirection: "row", gap: 8, alignItems: "center" },
+  input: { flex: 1, minHeight: 40, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: 12, fontSize: 15, color: colors.text },
+  err: { padding: 12, color: colors.danger, backgroundColor: colors.dangerSoft, borderRadius: radius.md },
 });

@@ -1,103 +1,32 @@
-# CopyThat — PRD
+# CopyThat Webb — PRD (v2, server-based)
 
 ## Overview
-Standalone iOS-first OCR scanner app. Takes photos of documents, runs AI OCR
-directly from the device (no backend), structures text per page with bold
-headings, surfaces a confidence percentage with rescan-to-improve loop,
-auto-paginates the scan set, and lets the user copy all text to the clipboard.
+Private web app (+ iOS app on same server) that ingests scanned/photographed study material, reads it with AI-OCR
+(text, headings, LaTeX math → Word equations, tables, multi-column), cuts out figures and places them in the text,
+stores an archive Kurs → Dokument → Sidor, lets the user run free AI instructions to create new documents,
+and exports Word (.docx) + ZIP (docx + txt + bilder/). All UI in Swedish. Owner: emil@jawel.se.
 
-Users bring their own AI API keys (OpenAI, Google Gemini, or Anthropic Claude),
-entered in an in-app Settings screen and stored locally in iOS Keychain /
-Android Keystore. No backend, no remote storage, no email sending.
+## Architecture
+- Backend FastAPI `/app/backend`: `server.py` (routes), `core.py` (Mongo, JWT, CommHub client, AI-key lookup),
+  `ai.py` (OpenAI/Gemini/Anthropic REST, OCR prompt, consensus/confidence, cleanup, instructions),
+  `pipeline.py` (PDF→pages via PyMuPDF 250 dpi, HEIC/TIFF via Pillow, background OCR queue sem=3, figure crop),
+  `export.py` (Markdown → Pandoc docx with OMML math, ZIP).
+- CommHub (commhub.cloud, app f2afb946-…): email OTP login (`/public/{app}/request-otp|verify-otp`, Public API must be
+  enabled in CommHub dashboard), file storage (`/files/upload`, public CloudFront URLs).
+- Allowlist login: only users in `db.users` (owner seeded, owner invites). Own JWT (30 days).
+- AI keys: from CommHub (`COMMHUB_AI_KEYS_PATH`, endpoint not yet available on CommHub) with fallback to backend/.env.
+- Modes: fast (primary only, default) / balanced (+1 verifier) / best (all verifiers). Primary default Gemini.
+- Frontend Expo Router: `login`, `archive` (sidebar courses + search, responsive), `doc/[id]` (upload chunked/drag&drop,
+  PageCard edit/rescan/figures crop editor, AiPanel, export), `settings` (mode, provider, users, templates, logout),
+  `capture` (iOS camera/library/Files → server).
 
-## Tech Stack
-- Frontend: Expo SDK 54 + React Native + expo-router (file-based)
-- Backend: **None.** App is 100% standalone frontend.
-- AI: direct HTTPS fetch from the device to each provider's REST endpoint
-  - OpenAI GPT-5.5 — `POST https://api.openai.com/v1/responses`
-  - Google Gemini 3.1 Pro Preview — `POST https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent`
-  - Anthropic Claude Sonnet 4.5 — `POST https://api.anthropic.com/v1/messages`
-    (uses `anthropic-dangerous-direct-browser-access: true` header for RN)
-- State: React Context (`ScansProvider`) — in-memory only
+## Data (Mongo `copythat`)
+users{id,email,role}, courses{id,user_id,name}, documents{id,user_id,course_id,title,kind scan|generated,status,
+markdown,figures,instruction}, pages{id,document_id,order,status,image_url,markdown,confidence,page_number,figures[]},
+templates, settings{id:"global",speed_mode,primary_provider}, uploads.
 
-## Settings & API Keys
-- Three independent provider cards (OpenAI / Gemini / Anthropic)
-- Tapping a card sets it as the **primary** (active) provider used for OCR
-- Each card has a "Use for verification" checkbox that enables it as a
-  verifier in **Consensus Mode** (see below)
-- Keys are stored via `expo-secure-store` (Keychain on iOS, EncryptedSharedPrefs on Android)
-- "Test" button pings the provider with a tiny prompt to validate the key
-- "Get key from …" opens the provider's console URL
-
-## Consensus Mode (korsverifiering)
-When the user enables "Use for verification" on one or more non-primary
-providers, every OCR scan fans out in parallel:
-- Primary call returns full JSON (structured + plain text + self-confidence)
-- Each verifier returns plain text only
-- We compute token-Jaccard `similarity(primary.plain_text, verifier.plain_text)`
-  for each verifier, average them → `consensus_score` (0–100)
-- Final confidence formula:
-  ```
-  base = 0.30 * self_confidence + 0.25 * coherence_score + 0.45 * consensus_score
-  confidence = clamp(base * (is_document_likelihood/100) + bonus_per_attempt, 0, 99)
-  ```
-  If no verifiers enabled: `base = 0.55 * self_confidence + 0.45 * coherence_score`
-- Hard guard: if `is_document_likelihood < 20` or extracted text < 8 chars,
-  confidence collapses to ≤15 (prevents "ceiling looks great" scores)
-
-## Frontend Screens (`/app/frontend/app`)
-- `_layout.tsx` — Stack + `ScansProvider` (in-memory store)
-- `index.tsx` — camera with overlay frame, shutter, scanned-pages pill,
-  Pages button, Settings shortcut, flash auto/on/off cycle
-- `pages.tsx` — list of all scans, auto-organised by detected/inferred page
-  number, "Copy all text" button (uses `expo-clipboard`)
-- `page/[id].tsx` — per-page detail with image, confidence badge (colour-coded),
-  bolded headings, edit toggle, rescan button when confidence < 90%,
-  shows consensus score / verifier names if any ran
-- `settings.tsx` — three provider cards, key input + visibility toggle,
-  Save / Test, "Use for verification" checkbox, links to provider consoles
-
-## Smart Pagination (`runOrganize`)
-Pages without a detected `page_number` get an inferred one based on neighbours'
-numbers and text context. Two pages may never share the same final number —
-collisions fall through to the next free integer. Fallback (if AI call fails):
-sequential fill of gaps in capture order.
-
-## Permissions
-- iOS `NSCameraUsageDescription` set in `app.json`
-- Android `CAMERA` permission set
-- `expo-camera` plugin configured
-
-## Env Vars
-- **None required.** All credentials are user-provided via Settings.
-- `/app/backend/.env` is unused by the app at runtime (legacy file).
-
-## Storage
-- `expo-secure-store`: each provider's API key + active provider + verifier flags
-- `@react-native-async-storage/async-storage`: persisted scans array (key
-  `copythat.scans.v1`). Hydrated on `ScansProvider` mount.
-- `expo-file-system` legacy API: captured images are copied from the camera
-  cache to `${documentDirectory}scans/<scanId>.<ext>` so they survive app
-  restarts. Images are deleted when the corresponding scan is removed or
-  rescanned.
-- No remote database, no MongoDB, no FastAPI.
-
-## Build & Deploy
-- Expo configuration is duplicated at both `/app/app.json`+`/app/eas.json` and
-  `/app/frontend/app.json`+`/app/frontend/eas.json` to support EAS builds from
-  the GitHub repo root via launch.expo.dev.
-- App name: **CopyThat** with vintage duplicator icon at `/app/frontend/assets/images/`.
-
-## Known Limitations
-- Camera does not work in the web preview tunnel (browser blocks getUserMedia
-  on the iframe). Real camera capture requires Expo Go iOS app or a native build.
-- Anthropic's CORS / browser policy requires the
-  `anthropic-dangerous-direct-browser-access` header; this is fine on RN native
-  but may be flagged in some web environments.
-
-## Update (June 2026)
-- DONE: "Import from Files" button (folder icon, testID import-files-btn) on camera screen using expo-document-picker
-  (iCloud Drive, On My iPhone, OneDrive, Dropbox via iOS Files; images only, multiple, max 20). Shared batch pipeline `importUris`.
-- iOS buildNumber bumped 6 -> 7 (root + frontend app.json). Root package.json synced (expo-document-picker).
-- RESEARCH ONLY (not built): server-based web version, see /app/memory/WEB_SERVER_RESEARCH.md
-  (FastAPI + email OTP login, server-held AI keys, PDF upload, image cut-out, DOCX+ZIP export, iOS on server, ScanBridge scanning on Windows).
+## Status (June 2026)
+- DONE: full backend + web/iOS frontend per approved plan (fas 1).
+- PENDING from user: AI keys (CommHub endpoint or .env), enable CommHub Public API (real OTP emails).
+- Before publish: remove TEST_LOGIN_EMAIL/CODE from backend/.env. New iOS build needed (app now server-based).
+- Old standalone app code archived in /app/_archive/frontend_local_v1.
