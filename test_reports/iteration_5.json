@@ -1,0 +1,22 @@
+{
+  "summary": "Frontend-only verification of ExpoAsset native module fix (SDK 57 alignment). All four requested checks PASS: (1) `npx expo install --check` reports 'Dependencies are up to date'; /app/package.json is byte-identical to /app/frontend/package.json (verified via diff). (2) iOS dev bundle at /node_modules/expo-router/entry.bundle?platform=ios compiles to HTTP 200, 6,470,734 bytes of application/javascript (not Metro error JSON). The only 'Cannot find native module' string in the bundle is the expo-modules-core error-template literal inside requireNativeModule, not an actual bundling error. (3) No app code imports expo-asset/ExpoAsset or any disallowed native modules; grepped imports in app/ are limited to expo-camera, expo-clipboard, expo-document-picker, expo-image-picker, expo-router, expo-secure-store, expo-status-bar, react-native, react-native-safe-area-context, @react-native-async-storage/async-storage — all compatible with Expo Go SDK 57. (4) Web smoke @ 390x844: logged in with test@copythat.app / 246810, reached /archive, opened course 'Kapitel 3' and a document (/doc/8f4232bd...) with full page content rendered (title, pages, figures) — no red screen, no 'runtime not ready' error. Only console error is one benign 401 on a background resource. Note: AI keys not configured (expected per test_credentials.md).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/test_reports/iteration_5.json"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Duplicate package.json at /app/package.json and /app/frontend/package.json is currently in sync but creates ongoing drift risk; consider removing /app/package.json or symlinking to /app/frontend/package.json to prevent future ExpoAsset-style mismatches."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped per request)", "frontend": "100%"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "ExpoAsset native-module crash on iPhone (Expo Go SDK 57) was fixed by aligning expo packages via `npx expo install --fix`. Validated at bundle + web level only (native Expo Go cannot run here). Backend was already verified in iteration_4 (39 tests). AI OCR keys intentionally absent — any 'Gemini: AI-nyckel saknas' error is expected.",
+  "rca_of_issue": "Root cause: expo-router 57.0.28 (SDK 57) transitively depends on expo-asset which is bundled with the native ExpoAsset module in the Expo Go SDK 57 runtime. Prior to fix, /app/package.json had drifted versions that pulled a mismatched expo-asset JS shim expecting a native module not registered in Expo Go, producing '[runtime not ready]: Cannot find native module ExpoAsset'. Mitigation applied by main agent: `npx expo install --fix` to pin all expo* packages to SDK 57's expected versions, synced /app/package.json with /app/frontend/package.json, cleared Metro cache, restarted Expo. Verification in this iteration confirms the fix at bundle and web level."
+}
