@@ -39,3 +39,6 @@ templates, settings{id:"global",speed_mode,primary_provider}, uploads.
 - Preview has Word/PDF toggle; PDF via /export?format=pdf (PyMuPDF Story from Pandoc HTML, A4). Save/Print are icon-only buttons.
 - Preview moved from RN Modal to route app/preview/[id].tsx (iOS share sheet 'Spara i Filer' fails from inside a Modal). app.json infoPlist CFBundleDevelopmentRegion=sv so system dialogs are Swedish (build only, not Expo Go).
 - iOS Spara now uses Directory.pickDirectoryAsync (folder picker in Files) + write; separate Dela icon keeps the share sheet.
+- PDF math: Pandoc --mathjax spans rendered to PNG via matplotlib mathtext (export._math_to_images); unsupported TeX shown as plain code.
+- ZIP (download + email) now includes <title>.pdf.
+- app.json `locales.sv` (locales/sv.json) adds sv.lproj so iOS system dialogs (print/share) are Swedish in builds (not in Expo Go).

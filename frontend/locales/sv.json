@@ -1,0 +1,5 @@
+{
+  "CFBundleDisplayName": "CopyThat",
+  "NSCameraUsageDescription": "Fota sidor så att texten kan läsas av",
+  "NSPhotoLibraryUsageDescription": "Hämta bilder för att läsa av texten"
+}

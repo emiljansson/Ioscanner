@@ -119,7 +119,7 @@ async def build_files(doc: dict, html: bool = False, pdf: bool = False) -> dict:
                 page = pypandoc.convert_file(str(src), "html5", format=PANDOC_FMT, extra_args=[
                     f"--resource-path={tmp}", "--standalone", "--embed-resources", "--mathml",
                     f"--include-in-header={t / 'style.html'}", f"--metadata=pagetitle:{doc.get('title') or 'Dokument'}"])
-            pdf_bytes = _html_to_pdf(pypandoc.convert_file(str(src), "html5", format=PANDOC_FMT), tmp) if pdf else b""
+            pdf_bytes = _html_to_pdf(_math_to_images(pypandoc.convert_file(str(src), "html5", format=PANDOC_FMT, extra_args=["--mathjax"]), t), tmp) if pdf else b""
             return out.read_bytes(), txt, page, pdf_bytes
     docx, txt, page, pdf_bytes = await asyncio.to_thread(_convert)
     return {"docx": docx, "txt": txt, "html": page, "pdf": pdf_bytes, "images": images,
@@ -132,6 +132,58 @@ h1 { font-size: 20pt; } h2 { font-size: 16pt; } h3 { font-size: 13pt; }
 img { max-width: 100%; }
 table { border-collapse: collapse; } th, td { border: 1px solid #999; padding: 3px 6px; }
 """
+
+
+MATH_RE = re.compile(r'<span\s+class="math (inline|display)">\\[(\[](.*?)\\[)\]]</span>', re.S)
+MATH_FONT_PT = 11
+
+
+def _render_tex(tex: str, path: Path, size: float = MATH_FONT_PT) -> tuple[float, float] | None:
+    """Render TeX with matplotlib mathtext to a 300-dpi PNG. Returns (width_pt, height_pt) or None."""
+    from matplotlib import mathtext
+    from matplotlib.font_manager import FontProperties
+    from PIL import Image
+    tex = re.sub(r"\\(begin|end)\{(aligned|align\*?|gathered|split)\}", "", tex).replace("&", "")
+    tex = re.sub(r"\\(dfrac|tfrac)", r"\\frac", tex).replace("\\displaystyle", "")
+    lines = [x.strip() for x in re.split(r"\\\\", tex) if x.strip()] or [tex]
+    try:
+        imgs = []
+        for i, line in enumerate(lines):
+            lp = path.with_name(f"{path.stem}_{i}.png")
+            mathtext.math_to_image(f"${line}$", str(lp), prop=FontProperties(size=size), dpi=300, format="png")
+            im = Image.open(lp).convert("RGBA")
+            bg = Image.new("RGB", im.size, (255, 255, 255))
+            bg.paste(im, mask=im.split()[3])
+            imgs.append(bg)
+            lp.unlink()
+    except Exception:
+        return None
+    w, h = max(i.width for i in imgs), sum(i.height for i in imgs) + 20 * (len(imgs) - 1)
+    out = Image.new("RGB", (w, h), (255, 255, 255))
+    y = 0
+    for im in imgs:
+        out.paste(im, (0, y))
+        y += im.height + 20
+    out.save(path)
+    return w * 72 / 300, h * 72 / 300
+
+
+def _math_to_images(body_html: str, tmpdir: Path) -> str:
+    """Replace Pandoc's TeX math spans with rendered formula images (PyMuPDF can't render MathML)."""
+    import html as htmlmod
+    (tmpdir / "math").mkdir(exist_ok=True)
+    count = [0]
+
+    def rep(m):
+        kind, tex = m.group(1), " ".join(htmlmod.unescape(m.group(2)).split())
+        count[0] += 1
+        name = f"math/m{count[0]}.png"
+        size = _render_tex(tex, tmpdir / name, MATH_FONT_PT + (2 if kind == "display" else 0))
+        if not size:
+            return f"<code>{htmlmod.escape(tex)}</code>"  # unsupported by mathtext: show plain TeX
+        img = f'<img src="{name}" width="{size[0]:.1f}" height="{size[1]:.1f}"/>'
+        return f'<span style="display:block;text-align:center;margin:6pt 0">{img}</span>' if kind == "display" else img
+    return MATH_RE.sub(rep, body_html)
 
 
 def _html_to_pdf(body_html: str, resource_dir: str) -> bytes:
@@ -162,6 +214,8 @@ def make_zip(files: dict, base: str) -> bytes:
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr(f"{base}.docx", files["docx"])
         z.writestr(f"{base}.txt", files["txt"])
+        if files.get("pdf"):
+            z.writestr(f"{base}.pdf", files["pdf"])
         for n, b in files["images"].items():
             z.writestr(f"bilder/{n}", b)
         if files.get("captions"):

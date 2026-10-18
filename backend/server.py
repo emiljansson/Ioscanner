@@ -558,7 +558,7 @@ def _snippet(text: str, q: str) -> str:
 async def export(doc_id: str, format: str = "docx", user: dict = Depends(current_user)):
     d = await own("documents", doc_id, user)
     try:
-        files = await build_files(d, html=format == "html", pdf=format == "pdf")
+        files = await build_files(d, html=format == "html", pdf=format in ("pdf", "zip"))
     except Exception as e:
         log.exception("export failed")
         raise HTTPException(500, f"Exporten misslyckades: {e}")
@@ -583,7 +583,7 @@ async def email_zip(doc_id: str, user: dict = Depends(current_user)):
     """Upload the ZIP to CommHub storage and email a download link to the logged-in user."""
     d = await own("documents", doc_id, user)
     try:
-        files = await build_files(d)
+        files = await build_files(d, pdf=True)
         base = safe_name(d["title"])
         stored = await commhub_upload(make_zip(files, base), f"{base}.zip", "application/zip", "documents")
     except Exception as e:
@@ -596,7 +596,7 @@ async def email_zip(doc_id: str, user: dict = Depends(current_user)):
     html = (
         '<table role="presentation" width="100%"><tr><td style="padding:24px;font-family:Arial,sans-serif;color:#1F2328">'
         f'<p style="font-size:16px">Här är ditt inskannade dokument <b>{t}</b> från CopyThat.</p>'
-        f'<p style="font-size:14px;color:#6B6F76">ZIP-filen innehåller Word-dokumentet, texten (.txt) och {n} bilder.</p>'
+        f'<p style="font-size:14px;color:#6B6F76">ZIP-filen innehåller Word-dokumentet, en PDF, texten (.txt) och {n} bilder.</p>'
         f'<p><a href="{url}" style="display:inline-block;background:#2F6FEB;color:#fff;padding:12px 20px;'
         'border-radius:8px;text-decoration:none;font-weight:bold">Ladda ner ZIP</a></p>'
         f'<p style="font-size:12px;color:#6B6F76">Fungerar inte knappen? Kopiera länken: {url}</p></td></tr></table>'

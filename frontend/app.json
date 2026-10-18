@@ -73,6 +73,9 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "locales": {
+      "sv": "./locales/sv.json"
     }
   }
 }
