@@ -1,0 +1,30 @@
+{
+  "summary": "All 6 requested scenarios PASS with real AI (Gemini/OpenAI from CommHub keychain). Backend: 8/8 pytest cases in /app/backend/tests/test_ai_flow.py — (1) GET /api/settings shows openai.has_key=true, gemini.has_key=true, anthropic.has_key=false; models exposed are fast=gpt-5.4-mini + gemini-3.8-flash, balanced=gpt-5.5 + gemini-3.1-pro-preview. (2) Fast-mode PDF upload (1 page, text + drawn diagram + printed page number '7') → page.status=done, confidence 98.8, page_number=7, ai.provider=gemini, ai.mode=fast, 1 figure with CommHub CloudFront url + file_id and caption 'Figur 3.2: Fri kropps-diagram'. (3) Balanced mode (set via mongo copythat.settings): upload second PDF → done, ai.mode=balanced, ai.verifiers=[{provider:'openai', ok:true, similarity}] (gemini primary + openai verifier; anthropic skipped because no key). (4) POST /api/pages/{id}/rescan on the done fast page → ok, re-finishes done with ai.mode='best'. (5) POST /api/process with document_ids → generated doc status='ready' with Swedish markdown; export of source doc and generated doc as docx and zip all return 200 with correct content-type and payload size. (6) Web UI at 1366x860: /doc/<id> shows confidence badge '99% · Hög säkerhet' (testid confidence-badge), 'Läst av Gemini (Snabb)' footer, figure thumbnail rendered from CommHub CloudFront, markdown + figure caption; /settings shows 'Nyckel finns' pills for OpenAI (gpt-5.4-mini) and Gemini (gemini-3.8-flash, selected as huvud-AI) and 'Nyckel saknas' for Claude. Settings restored to speed_mode=fast + primary_provider=gemini after suite. Real AI calls used: ~9 (fast upload x2, balanced upload x1 + verifier x1, rescan x1 + verifier x1, process x1, extras from retries) — within <10 budget.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_ai_flow.py",
+    "/app/test_reports/pytest/pytest_results_iter7.xml",
+    "/tmp/ui_03_doc.png",
+    "/tmp/ui_02d_settings.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "core.get_ai_keys caches 5 min when all keys found else 30 s; the cache is a module-level dict shared across workers — fine for single-worker uvicorn but ambiguous under multi-worker deployment. If deployed with workers>1 each worker will fetch independently (acceptable, just noting).",
+    "core.get_ai_keys: KEYCHAIN_NAMES includes 'anthropic/claude' candidates, but the listing endpoint only prepends a service name when provider matches. Current mapping s.get('provider')=='claude' => 'anthropic' is a special-case string match; if CommHub introduces another provider id (e.g. 'anthropic-family') the key will not be auto-discovered and will fall back to the hardcoded KEYCHAIN_NAMES list — low risk now because anthropic has no key, but worth generalizing (e.g. map every service by matching provider substring).",
+    "ai.pick_primary: when the configured primary_provider has no key it transparently falls back to another provider. Settings GET still reports primary_provider as 'gemini' (the stored value) even if a fallback is used at runtime; a hint in /api/settings response (e.g. effective_primary) could prevent user confusion if the key is revoked.",
+    "ai.read_page: in 'best' mode verifiers=others (all providers with keys). For primary=gemini this results in exactly 1 verifier (openai) because anthropic has no key — the handoff asked for verifiers to 'contain openai/gemini'; code is correct but note that balanced uses others[:1] so only ONE verifier runs regardless of configuration."
+  ],
+  "updated_files": ["/app/backend/tests/test_ai_flow.py"],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100%"},
+  "seed_data_creation": "Transient Mongo doc/page used to seed the UI check (course+document+done page with figure URL) was created and deleted after the UI assertions. Backend test uploads are cleaned by their fixtures (module/class scoped yield-delete).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Login: test@copythat.app / 246810. If auth returns 403 'inte inbjuden' between runs, the auto-created test user was wiped — `sudo supervisorctl restart backend` recreates it (see server.py startup hook). AI keys come from CommHub keychain; openai+gemini are provisioned, anthropic is not (expected 'Nyckel saknas'). Current global settings: speed_mode='fast', primary_provider='gemini'. Models: gemini fast=gemini-3.8-flash, balanced/best=gemini-3.1-pro-preview; openai fast=gpt-5.4-mini, balanced/best=gpt-5.5; anthropic fast=claude-haiku-4-5. Backend tests at /app/backend/tests/test_ai_flow.py require real paid AI calls (~9 per full run, roughly 2.5 min); keep the pytest.X cross-test state in mind if splitting runs. Figure URLs are CloudFront URLs (d2uopk0rz2xy0j.cloudfront.net), NOT commhub.cloud direct links.",
+  "rca_of_issue": "During the first test run, the test user record vanished mid-suite (test@copythat.app) which caused all authenticated calls to return 401 'Kontot finns inte längre'. Root cause: the test user is seeded in server.py startup but was deleted outside my process (likely owner-driven admin cleanup in a parallel session, or a previous iteration's teardown). Mitigation: restart backend to re-run the startup seed. After restart all tests pass cleanly."
+}

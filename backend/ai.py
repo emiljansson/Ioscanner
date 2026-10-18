@@ -9,8 +9,8 @@ import httpx
 from core import get_ai_keys, log
 
 MODELS = {
-    "openai": {"fast": "gpt-5-mini", "balanced": "gpt-5", "best": "gpt-5.5"},
-    "gemini": {"fast": "gemini-2.5-flash", "balanced": "gemini-2.5-pro", "best": "gemini-3.1-pro-preview"},
+    "openai": {"fast": "gpt-5.4-mini", "balanced": "gpt-5.5", "best": "gpt-5.5"},
+    "gemini": {"fast": "gemini-3.8-flash", "balanced": "gemini-3.1-pro-preview", "best": "gemini-3.1-pro-preview"},
     "anthropic": {"fast": "claude-haiku-4-5", "balanced": "claude-sonnet-4-5", "best": "claude-sonnet-4-5"},
 }
 LABELS = {"openai": "OpenAI", "gemini": "Gemini", "anthropic": "Claude"}
