@@ -391,15 +391,46 @@ timeout /t 4 >nul
 """
 
 
-@api.get("/scanner/script")
-async def scanner_script(base: str, user: dict = Depends(current_user)):
-    """Personal Windows script (key + upload URL embedded). `base` = the app's backend URL."""
+async def _script_bytes(base: str, user: dict) -> bytes:
     if not re.match(r"^https?://[\w.\-:]+$", base):
         raise HTTPException(400, "Ogiltig adress")
     info = await _scanner_info(user)
     body = SCAN_SCRIPT.replace("__KEY__", info["key"]).replace("__URL__", f"{base}/api/scanner/upload")
-    return Response(body.replace("\n", "\r\n").encode("utf-8"), media_type="application/octet-stream",
+    return body.replace("\n", "\r\n").encode("utf-8")
+
+
+@api.get("/scanner/script")
+async def scanner_script(base: str, user: dict = Depends(current_user)):
+    """Personal Windows script (key + upload URL embedded). `base` = the app's backend URL."""
+    return Response(await _script_bytes(base, user), media_type="application/octet-stream",
                     headers={"Content-Disposition": 'attachment; filename="copythat-skanna.cmd"'})
+
+
+@api.post("/scanner/script/email")
+async def email_scanner_script(base: str, user: dict = Depends(current_user)):
+    """Mail a download link for the script (CommHub email has no attachments) — handy from the phone."""
+    data = await _script_bytes(base, user)
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0, "scan_script_file_id": 1})
+    stored = await commhub_upload(data, "copythat-skanna.cmd", "application/octet-stream", "documents")
+    await commhub_delete(u.get("scan_script_file_id"))
+    await db.users.update_one({"id": user["id"]}, {"$set": {"scan_script_file_id": stored["id"]}})
+    url = stored["url"]
+    html = (
+        '<div style="font-family:Arial,sans-serif;color:#1F2328;padding:16px">'
+        '<p style="font-size:16px">Här är ditt CopyThat-skript för NAPS2.</p>'
+        '<p style="font-size:14px">Öppna mejlet på din Windows-dator, ladda ner filen och lägg den t.ex. på skrivbordet. '
+        'Dubbelklicka på den för att skanna och skicka till CopyThat.</p>'
+        f'<p><a href="{url}" style="display:inline-block;background:#2F6FEB;color:#fff;padding:12px 20px;border-radius:8px;'
+        'text-decoration:none;font-weight:bold">Ladda ner copythat-skanna.cmd</a></p>'
+        '<p style="font-size:12px;color:#6B6F76">Skriptet innehåller din personliga skannernyckel – dela det inte. '
+        'Byter du nyckel i appen slutar det här skriptet att fungera.</p></div>'
+    )
+    try:
+        await commhub_send_email(user["email"], "Ditt CopyThat-skript för NAPS2", html,
+                                 f"Ladda ner ditt CopyThat-skript för NAPS2 på Windows-datorn: {url}")
+    except RuntimeError:
+        raise HTTPException(503, "Mejlet kunde inte skickas just nu. Försök igen om en stund.")
+    return {"ok": True, "email": user["email"]}
 
 
 @api.post("/scanner/upload")

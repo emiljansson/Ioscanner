@@ -47,3 +47,4 @@ templates, settings{id:"global",speed_mode,primary_provider}, uploads.
 - PDF: figures sized like Word (1px=1pt, max 420x640pt) and laid out block-by-block so figures move to next page instead of shrinking. users.scan_key index.
 - Delete fix: archive reloads docs on focus; doc delete guarded against double tap (404 = success); page delete optimistic; course delete removes immediately.
 - PDF styled like Word: bundled Carlito fonts (backend/fonts, Calibri-metric), 12pt body, headings #0F4761 20/16/14pt, A4 2.54cm margins.
+- Settings: 'Mejla skriptet till mig' (POST /api/scanner/script/email?base=) for iPhone users; script stored in CommHub, link emailed.

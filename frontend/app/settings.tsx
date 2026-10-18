@@ -78,9 +78,25 @@ export default function SettingsScreen() {
     }
   };
 
+  const scriptBase = () => (API_URL.startsWith("http") ? API_URL.replace(/\/api$/, "") : window.location.origin);
+  const [mailingScript, setMailingScript] = useState(false);
+  const [scriptMsg, setScriptMsg] = useState<string | null>(null);
+  const emailScript = async () => {
+    setMailingScript(true);
+    setScriptMsg(null);
+    try {
+      const r = await api<{ email: string }>(`/scanner/script/email?base=${encodeURIComponent(scriptBase())}`, { method: "POST" });
+      setScriptMsg(`Skriptet är skickat till ${r.email}. Öppna mejlet på Windows-datorn.`);
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setMailingScript(false);
+    }
+  };
+
   const downloadScript = async () => {
     try {
-      const base = API_URL.startsWith("http") ? API_URL.replace(/\/api$/, "") : window.location.origin;
+      const base = scriptBase();
       const r = await fetch(`${API_URL}/scanner/script?base=${encodeURIComponent(base)}`, { headers: { Authorization: `Bearer ${getToken()}` } });
       if (!r.ok) throw new Error("Skriptet kunde inte laddas ner");
       const a = document.createElement("a");
@@ -183,13 +199,15 @@ export default function SettingsScreen() {
               <Button testID="scan-new-key" small label="Ny nyckel" onPress={async () => setScanner(await api<Scanner>("/scanner/key", { method: "POST" }))} />
             </View>
             <Text style={styles.muted}>Nyckeln finns inbakad i skriptet. Byter du nyckel slutar gamla skript att fungera – ladda då ner skriptet igen.</Text>
-            {Platform.OS === "web" ? (
-              <Button testID="scan-script" variant="primary" icon="download-outline" label="Ladda ner skript för Windows" onPress={downloadScript} style={{ alignSelf: "flex-start" }} />
-            ) : (
-              <Text style={styles.muted}>Öppna CopyThat i webbläsaren på din Windows-dator för att ladda ner skriptet.</Text>
-            )}
+            <View style={styles.chips}>
+              {Platform.OS === "web" && (
+                <Button testID="scan-script" variant="primary" icon="download-outline" label="Ladda ner skript för Windows" onPress={downloadScript} />
+              )}
+              <Button testID="scan-script-email" variant={Platform.OS === "web" ? "secondary" : "primary"} icon="mail-outline" label="Mejla skriptet till mig" loading={mailingScript} onPress={emailScript} />
+            </View>
+            {scriptMsg && <Text style={styles.ok}>{scriptMsg}</Text>}
             <Text style={styles.muted}>
-              Så här gör du:{"\n"}1. Installera NAPS2 och ställ in din skanner i NAPS2-profilen.{"\n"}2. Ladda ner skriptet och lägg det t.ex. på skrivbordet.{"\n"}3. Dubbelklicka på skriptet – det skannar och skickar till CopyThat. Du kan också dra PDF:er eller bilder till skriptet.
+              Så här gör du:{"\n"}1. Installera NAPS2 och ställ in din skanner i NAPS2-profilen.{"\n"}2. Ladda ner skriptet (eller mejla det till dig och öppna mejlet på datorn) och lägg det t.ex. på skrivbordet.{"\n"}3. Dubbelklicka på skriptet – det skannar och skickar till CopyThat. Du kan också dra PDF:er eller bilder till skriptet.
             </Text>
           </View>
         )}
@@ -243,5 +261,6 @@ const styles = StyleSheet.create({
   chipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipText: { fontSize: 14, fontWeight: "600", color: colors.text },
   key: { flex: 1, fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), fontSize: 13, color: colors.text, backgroundColor: colors.bg, borderRadius: radius.sm, paddingHorizontal: 10, paddingVertical: 8 },
+  ok: { padding: 12, color: colors.ok, backgroundColor: colors.okSoft, borderRadius: radius.md },
   err: { padding: 12, color: colors.danger, backgroundColor: colors.dangerSoft, borderRadius: radius.md },
 });
