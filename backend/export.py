@@ -129,7 +129,8 @@ async def build_files(doc: dict, html: bool = False, pdf: bool = False) -> dict:
 PDF_CSS = """
 body { font-family: sans-serif; font-size: 11pt; line-height: 1.45; color: #111; }
 h1 { font-size: 20pt; } h2 { font-size: 16pt; } h3 { font-size: 13pt; }
-img { max-width: 100%; }
+figure { margin: 8pt 0; text-align: center; }
+figcaption { font-size: 9.5pt; color: #444; text-align: center; margin-top: 3pt; }
 table { border-collapse: collapse; } th, td { border: 1px solid #999; padding: 3px 6px; }
 """
 
@@ -186,20 +187,66 @@ def _math_to_images(body_html: str, tmpdir: Path) -> str:
     return MATH_RE.sub(rep, body_html)
 
 
+IMG_TAG_RE = re.compile(r'<img src="(images/[^"]+)"')
+PDF_IMG_MAX_W, PDF_IMG_MAX_H = 420, 640  # pt; same 14.8 cm max width as the Word export
+
+
+def _size_images(body_html: str, resource_dir: str) -> str:
+    """Give every figure an explicit size like Pandoc does in Word (1 px = 1 pt, capped to the text width)."""
+    from PIL import Image
+
+    def rep(m):
+        try:
+            with Image.open(Path(resource_dir) / m.group(1)) as im:
+                w, h = im.size
+        except Exception:
+            return m.group(0)
+        scale = min(1.0, PDF_IMG_MAX_W / w, PDF_IMG_MAX_H / h)
+        return f'<img width="{w * scale:.0f}" height="{h * scale:.0f}" src="{m.group(1)}"'
+    return IMG_TAG_RE.sub(rep, body_html)
+
+
 def _html_to_pdf(body_html: str, resource_dir: str) -> bytes:
-    """Render HTML (with images/ relative paths) to an A4 PDF using PyMuPDF Story."""
+    """Render HTML to an A4 PDF with PyMuPDF Story, one top-level block at a time, so figures are
+    moved to the next page instead of being shrunk to fit the space left on the current one."""
     import pymupdf as fitz
-    story = fitz.Story(html=body_html, user_css=PDF_CSS, archive=resource_dir)
+    from html import escape
+    from lxml import html as lh
+    body_html = _size_images(body_html, resource_dir)
+    blocks = [f"<p>{escape(f)}</p>" if isinstance(f, str) else lh.tostring(f, encoding="unicode")
+              for f in lh.fragments_fromstring(body_html) if not isinstance(f, str) or f.strip()]
     buf = io.BytesIO()
     writer = fitz.DocumentWriter(buf)
     page_rect = fitz.paper_rect("a4")
-    where = page_rect + (56, 56, -56, -56)
-    more = True
-    while more:
-        dev = writer.begin_page(page_rect)
-        more, _ = story.place(where)
-        story.draw(dev)
-        writer.end_page()
+    area = page_rect + (56, 56, -56, -56)
+    state = {"dev": None, "y": area.y0}
+
+    def new_page():
+        if state["dev"] is not None:
+            writer.end_page()
+        state["dev"], state["y"] = writer.begin_page(page_rect), area.y0
+
+    def story(b):
+        return fitz.Story(html=b, user_css=PDF_CSS, archive=resource_dir)
+
+    new_page()
+    for b in blocks:
+        is_fig = "<img" in b and "math/" not in b
+        if re.match(r"<h[1-6]", b) and area.y1 - state["y"] < 80:
+            new_page()  # keep headings with the text that follows
+        st = story(b)
+        while True:
+            more, filled = st.place(fitz.Rect(area.x0, state["y"], area.x1, area.y1))
+            if more and is_fig and state["y"] > area.y0:
+                new_page()  # whole figure on the next page instead of a shrunken one
+                st = story(b)
+                continue
+            st.draw(state["dev"])
+            if not more:
+                state["y"] = fitz.Rect(filled).y1
+                break
+            new_page()
+    writer.end_page()
     writer.close()
     return buf.getvalue()
 

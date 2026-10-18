@@ -42,3 +42,6 @@ templates, settings{id:"global",speed_mode,primary_provider}, uploads.
 - PDF math: Pandoc --mathjax spans rendered to PNG via matplotlib mathtext (export._math_to_images); unsupported TeX shown as plain code.
 - ZIP (download + email) now includes <title>.pdf.
 - app.json `locales.sv` (locales/sv.json) adds sv.lproj so iOS system dialogs (print/share) are Swedish in builds (not in Expo Go).
+- AI keys now read from CommHub keychain (gemini, openai-family). OPENAI/GEMINI/ANTHROPIC removed from backend/.env (backup was /tmp/env.bak). Anthropic not yet in keychain.
+- Scanner (NAPS2): per-user scan_key + scan_course_id on users. Endpoints GET/PUT /api/scanner, POST /api/scanner/key, GET /api/scanner/script?base= (personal copythat-skanna.cmd: runs NAPS2.Console -o pdf then curl upload; drag&drop files also), POST /api/scanner/upload (X-Scan-Key header) -> new doc "Skanning YYYY-MM-DD HH:MM" in chosen folder (fallback Inkorg), AI starts directly. Settings UI card "Skanner (NAPS2)".
+- PDF: figures sized like Word (1px=1pt, max 420x640pt) and laid out block-by-block so figures move to next page instead of shrinking. users.scan_key index.

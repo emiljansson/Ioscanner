@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { api, type Template, type User } from "@/src/api";
+import { api, API_URL, getToken, type Course, type Template, type User } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { Button } from "@/src/components/ui";
 import { colors, radius } from "@/src/theme";
@@ -14,6 +15,8 @@ type Settings = {
   providers: { id: string; label: string; has_key: boolean; models: Record<string, string> }[];
   is_owner: boolean;
 };
+
+type Scanner = { key: string; course_id: string | null; course_name: string };
 
 const MODES = [
   { id: "fast", label: "Snabb", hint: "En AI läser sidan. Billigast." },
@@ -29,12 +32,17 @@ export default function SettingsScreen() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [invite, setInvite] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [scanner, setScanner] = useState<Scanner | null>(null);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [copied, setCopied] = useState(false);
 
   const load = useCallback(async () => {
     try {
       const st = await api<Settings>("/settings");
       setS(st);
       setTemplates(await api<Template[]>("/templates"));
+      setScanner(await api<Scanner>("/scanner"));
+      setCourses(await api<Course[]>("/courses"));
       if (st.is_owner) setUsers(await api<User[]>("/admin/users"));
     } catch (e: any) {
       setErr(e.message);
@@ -57,6 +65,29 @@ export default function SettingsScreen() {
       await api("/admin/users", { body: { email: invite } });
       setInvite("");
       setUsers(await api<User[]>("/admin/users"));
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  };
+
+  const setScanFolder = async (course_id: string) => {
+    try {
+      setScanner(await api<Scanner>("/scanner", { method: "PUT", body: { course_id } }));
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  };
+
+  const downloadScript = async () => {
+    try {
+      const base = API_URL.startsWith("http") ? API_URL.replace(/\/api$/, "") : window.location.origin;
+      const r = await fetch(`${API_URL}/scanner/script?base=${encodeURIComponent(base)}`, { headers: { Authorization: `Bearer ${getToken()}` } });
+      if (!r.ok) throw new Error("Skriptet kunde inte laddas ner");
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(await r.blob());
+      a.download = "copythat-skanna.cmd";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
     } catch (e: any) {
       setErr(e.message);
     }
@@ -126,6 +157,43 @@ export default function SettingsScreen() {
           </View>
         )}
 
+        {scanner && (
+          <View style={styles.card} testID="scanner-card">
+            <Text style={styles.h2}>Skanner (NAPS2)</Text>
+            <Text style={styles.muted}>Skanna på Windows-datorn med ett dubbelklick. Varje skanning blir ett nytt dokument i mappen du väljer här, och AI-läsningen startar direkt.</Text>
+            <Text style={styles.optLabel}>Mapp för skanningar</Text>
+            <View style={styles.chips}>
+              {courses.map((c) => {
+                const on = (scanner.course_id ?? courses.find((x) => x.name === "Inkorg")?.id) === c.id;
+                return (
+                  <Pressable key={c.id} testID={`scan-folder-${c.id}`} onPress={() => setScanFolder(c.id)} style={[styles.chip, on && styles.chipOn]}>
+                    <Ionicons name={on ? "folder-open" : "folder-outline"} size={16} color={on ? colors.primaryText : colors.text} />
+                    <Text style={[styles.chipText, on && { color: colors.primaryText }]}>{c.name}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            {!scanner.course_id && <Text style={styles.muted}>Ingen mapp vald – skanningar hamnar i Inkorg.</Text>}
+            <Text style={styles.optLabel}>Skannernyckel</Text>
+            <View style={styles.row}>
+              <Text testID="scan-key" style={styles.key} numberOfLines={1} selectable>{scanner.key}</Text>
+              <Pressable style={styles.icon} accessibilityLabel="Kopiera nyckel" onPress={async () => { await Clipboard.setStringAsync(scanner.key); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
+                <Ionicons name={copied ? "checkmark" : "copy-outline"} size={18} color={colors.primary} />
+              </Pressable>
+              <Button testID="scan-new-key" small label="Ny nyckel" onPress={async () => setScanner(await api<Scanner>("/scanner/key", { method: "POST" }))} />
+            </View>
+            <Text style={styles.muted}>Nyckeln finns inbakad i skriptet. Byter du nyckel slutar gamla skript att fungera – ladda då ner skriptet igen.</Text>
+            {Platform.OS === "web" ? (
+              <Button testID="scan-script" variant="primary" icon="download-outline" label="Ladda ner skript för Windows" onPress={downloadScript} style={{ alignSelf: "flex-start" }} />
+            ) : (
+              <Text style={styles.muted}>Öppna CopyThat i webbläsaren på din Windows-dator för att ladda ner skriptet.</Text>
+            )}
+            <Text style={styles.muted}>
+              Så här gör du:{"\n"}1. Installera NAPS2 och ställ in din skanner i NAPS2-profilen.{"\n"}2. Ladda ner skriptet och lägg det t.ex. på skrivbordet.{"\n"}3. Dubbelklicka på skriptet – det skannar och skickar till CopyThat. Du kan också dra PDF:er eller bilder till skriptet.
+            </Text>
+          </View>
+        )}
+
         <View style={styles.card}>
           <Text style={styles.h2}>Sparade mallar</Text>
           {templates.map((t) => (
@@ -170,5 +238,10 @@ const styles = StyleSheet.create({
   userEmail: { flex: 1, fontSize: 15, color: colors.text },
   row: { flexDirection: "row", gap: 8, alignItems: "center" },
   input: { flex: 1, minHeight: 40, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: 12, fontSize: 15, color: colors.text },
+  chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, minHeight: 40, borderRadius: 999, borderWidth: 1, borderColor: colors.border },
+  chipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
+  chipText: { fontSize: 14, fontWeight: "600", color: colors.text },
+  key: { flex: 1, fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), fontSize: 13, color: colors.text, backgroundColor: colors.bg, borderRadius: radius.sm, paddingHorizontal: 10, paddingVertical: 8 },
   err: { padding: 12, color: colors.danger, backgroundColor: colors.dangerSoft, borderRadius: radius.md },
 });

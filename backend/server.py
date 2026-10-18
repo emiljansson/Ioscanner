@@ -1,9 +1,10 @@
 """CopyThat API – AI-OCR for study material."""
 import re
+import secrets
 import shutil
 from pathlib import Path
 
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Header
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
@@ -301,6 +302,134 @@ async def inbox(user: dict = Depends(current_user)):
                "status": "ready", "created_at": now(), "updated_at": now()}
         await db.documents.insert_one(dict(doc))
     return {"course": course, "document": clean(doc)}
+
+
+# ---------------- Scanner (NAPS2 "command after scan") ----------------
+class ScannerIn(BaseModel):
+    course_id: str
+
+
+async def _scanner_info(user: dict) -> dict:
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0, "scan_key": 1, "scan_course_id": 1})
+    if not u.get("scan_key"):
+        u["scan_key"] = secrets.token_urlsafe(24)
+        await db.users.update_one({"id": user["id"]}, {"$set": {"scan_key": u["scan_key"]}})
+    course = await db.courses.find_one({"id": u.get("scan_course_id"), "user_id": user["id"]}, {"_id": 0}) \
+        if u.get("scan_course_id") else None
+    return {"key": u["scan_key"], "course_id": course["id"] if course else None,
+            "course_name": course["name"] if course else "Inkorg"}
+
+
+@api.get("/scanner")
+async def get_scanner(user: dict = Depends(current_user)):
+    return await _scanner_info(user)
+
+
+@api.put("/scanner")
+async def put_scanner(body: ScannerIn, user: dict = Depends(current_user)):
+    await own("courses", body.course_id, user)
+    await db.users.update_one({"id": user["id"]}, {"$set": {"scan_course_id": body.course_id}})
+    return await _scanner_info(user)
+
+
+@api.post("/scanner/key")
+async def new_scanner_key(user: dict = Depends(current_user)):
+    await db.users.update_one({"id": user["id"]}, {"$set": {"scan_key": secrets.token_urlsafe(24)}})
+    return await _scanner_info(user)
+
+
+SCAN_SCRIPT = r"""@echo off
+rem CopyThat - skanna med NAPS2 och skicka till CopyThat.
+rem  * Dubbelklicka: skannar med NAPS2 (standardprofilen) och skickar resultatet.
+rem  * Dra filer (PDF/bilder) och slapp dem pa skriptet: skickar filerna.
+rem  * I NAPS2 kan du lagga in skriptet som kommando, t.ex.  copythat-skanna.cmd "fil.pdf"
+setlocal EnableDelayedExpansion
+chcp 65001 >nul
+set "KEY=__KEY__"
+set "URL=__URL__"
+rem Valfritt: en NAPS2-profil, t.ex.  set "NAPS2_ARGS=--profile CopyThat"
+set "NAPS2_ARGS="
+
+if not "%~1"=="" (
+  for %%F in (%*) do call :send "%%~F"
+  goto :end
+)
+set "NAPS2=%ProgramFiles%\NAPS2\NAPS2.Console.exe"
+if not exist "!NAPS2!" set "NAPS2=%ProgramFiles(x86)%\NAPS2\NAPS2.Console.exe"
+if not exist "!NAPS2!" (
+  echo Hittar inte NAPS2.Console.exe. Installera NAPS2 fran https://www.naps2.com
+  pause
+  exit /b 1
+)
+set "OUT=%TEMP%\copythat_%RANDOM%%RANDOM%.pdf"
+echo Skannar med NAPS2...
+"!NAPS2!" -o "!OUT!" !NAPS2_ARGS!
+if not exist "!OUT!" (
+  echo Ingen skanning gjordes.
+  pause
+  exit /b 1
+)
+call :send "!OUT!"
+del "!OUT!" >nul 2>&1
+goto :end
+
+:send
+echo Skickar %~nx1 till CopyThat...
+curl.exe -sS --fail-with-body -H "X-Scan-Key: %KEY%" -F "file=@%~1" "%URL%"
+if errorlevel 1 (
+  echo.
+  echo Det gick inte att skicka %~nx1
+  pause
+) else (
+  echo.
+  echo Klart! Skanningen syns snart i CopyThat.
+)
+exit /b
+
+:end
+timeout /t 4 >nul
+"""
+
+
+@api.get("/scanner/script")
+async def scanner_script(base: str, user: dict = Depends(current_user)):
+    """Personal Windows script (key + upload URL embedded). `base` = the app's backend URL."""
+    if not re.match(r"^https?://[\w.\-:]+$", base):
+        raise HTTPException(400, "Ogiltig adress")
+    info = await _scanner_info(user)
+    body = SCAN_SCRIPT.replace("__KEY__", info["key"]).replace("__URL__", f"{base}/api/scanner/upload")
+    return Response(body.replace("\n", "\r\n").encode("utf-8"), media_type="application/octet-stream",
+                    headers={"Content-Disposition": 'attachment; filename="copythat-skanna.cmd"'})
+
+
+@api.post("/scanner/upload")
+async def scanner_upload(file: UploadFile = File(...), x_scan_key: str = Header("")):
+    """Called by the NAPS2 script: creates a new document in the chosen folder and starts AI reading."""
+    user = await db.users.find_one({"scan_key": x_scan_key}, {"_id": 0}) if x_scan_key else None
+    if not user:
+        raise HTTPException(401, "Ogiltig skannernyckel")
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "Filen var tom")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "Filen är för stor (max 500 MB)")
+    info = await _scanner_info(user)
+    course_id = info["course_id"] or (await inbox(user))["course"]["id"]
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    title = f"Skanning {datetime.now(ZoneInfo('Europe/Stockholm')):%Y-%m-%d %H:%M}"
+    doc = {"id": new_id(), "user_id": user["id"], "course_id": course_id, "title": title, "kind": "scan",
+           "status": "ready", "created_at": now(), "updated_at": now()}
+    await db.documents.insert_one(dict(doc))
+    try:
+        n = await pipeline.ingest(doc, user, data, file.filename or "skanning.pdf")
+    except ValueError as e:
+        await delete_document_data(doc["id"])
+        raise HTTPException(422, str(e))
+    except RuntimeError as e:
+        await delete_document_data(doc["id"])
+        raise HTTPException(502, str(e))
+    return {"ok": True, "document_id": doc["id"], "title": title, "pages": n}
 
 
 # ---------------- Chunked uploads ----------------
@@ -629,6 +758,7 @@ app.add_middleware(CORSMiddleware, allow_credentials=False, allow_origins=["*"],
 @app.on_event("startup")
 async def startup():
     await db.users.create_index("email", unique=True)
+    await db.users.create_index("scan_key", sparse=True)
     await db.pages.create_index([("document_id", 1), ("order", 1)])
     for e, role in ((OWNER_EMAIL, "owner"), (TEST_LOGIN_EMAIL, "member")):
         if e and not await db.users.find_one({"email": e}):

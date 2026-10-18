@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 16 verifies the new NAPS2 scanner feature end-to-end (backend + web frontend) plus a regression quick check on Word button + ZIP export. Backend: all 15 scanner pytest tests pass (/app/backend/tests/test_scanner.py). GET /api/scanner requires auth (401 without token) and returns {key, course_id, course_name}; auto-creates a persistent URL-safe key on first call. PUT /api/scanner {course_id} sets the folder and returns 404 for unknown/foreign course. POST /api/scanner/key regenerates the key — verified the old key then returns 401 on /scanner/upload. GET /api/scanner/script?base=<url> returns application/octet-stream with Content-Disposition attachment copythat-skanna.cmd, embeds the user's current key AND <base>/api/scanner/upload, uses CRLF line endings exclusively (every \\n is preceded by \\r); invalid base => 400; requires auth. POST /api/scanner/upload with X-Scan-Key header and multipart 'file' creates a NEW document in the chosen folder with title 'Skanning YYYY-MM-DD HH:MM' (Europe/Stockholm) and pages in queued/processing/error/done statuses; works for JPG (1 page) and PDF (2 pages); falls back to 'Inkorg' when no folder is set; wrong key => 401; missing key => 401; empty file => 400. Regression: GET /api/documents/{id}/export?format=zip returns a valid ZIP (PK header, 9938 bytes) containing BOTH .docx, .txt, AND .pdf entries. All 9 Word-preview + email-zip tests from iter15 still pass. Frontend web (390x844, logged in as test@copythat.app via /api/auth/verify + localStorage['copythat.token']): /settings renders the testID 'scanner-card' with title 'Skanner (NAPS2)'. The folder chip testID 'scan-folder-<courseId>' is tappable; tap turns background from rgba(0,0,0,0) to rgb(47,93,80) (primary brand green), is persisted via PUT /api/scanner (GET confirms course_id = tapped course), and the highlight remains after full page reload. 'scan-key' text displays the current 32-char key; 'scan-new-key' button changes it to a new value in the UI (verified via inner_text comparison). 'scan-script' button triggers a real browser download event with suggestedFilename 'copythat-skanna.cmd' (1484 bytes); downloaded content contains CRLF, the current scan key, and the /api/scanner/upload path. Regression UI: on /doc/{id} the 'download-docx' (Word) testID is present in the toolbar. No red-screen, no PAGEERROR, no uncaught exceptions. Code review of /app/backend/server.py scanner section (lines 307-432): clean, DRY (_scanner_info helper reused by GET/PUT/POST/key and upload), proper Pydantic (ScannerIn), proper HTTPException codes (400/401/404/413/422/502), zoneinfo for Stockholm time, secrets.token_urlsafe(24) for keys, base validated with regex. Code review of /app/frontend/app/settings.tsx: clean (248 lines), all testIDs present, downloadScript uses fetch -> blob -> <a download> + revokeObjectURL cleanup, Bearer token sent via header. No deprecated expo packages found in settings.tsx or server scanner section (expo-clipboard is current).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_scanner.py",
+    "/app/test_reports/pytest/pytest_results_iter16_scanner.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py:312-320 _scanner_info is the single source of truth for the scanner payload — reused by every endpoint. DRY.",
+    "server.py:330 own('courses', body.course_id, user) correctly 404s on unknown or foreign course before PUT persists anything. Correct.",
+    "server.py:397 base validated with ^https?://[\\w.\\-:]+$ — simple but adequate; prevents obviously bad input and would reject spaces/paths. Good.",
+    "server.py:401 Response(body.replace('\\n', '\\r\\n').encode('utf-8'), media_type='application/octet-stream') with Content-Disposition filename='copythat-skanna.cmd' — perfect for Windows cmd execution.",
+    "server.py:408 user lookup via scan_key is a direct equality on the users collection; given the key is 24-byte URL-safe (~192 bits) this is effectively unguessable. Consider adding an index on scan_key for performance when the user base grows.",
+    "server.py:417 fallback to inbox course works but calls the FastAPI route function `inbox(user)` directly — not an issue functionally but a slight smell (mixing HTTP handler with internal helper). Verified behavior: a user with no scan_course_id auto-gets a doc in 'Inkorg' folder.",
+    "server.py:420 title uses Europe/Stockholm tz, perfect for Swedish users.",
+    "settings.tsx:83 base = API_URL.replace(/\\/api$/, '') | window.location.origin — handles the trailing /api cleanly and falls back correctly for native. Good.",
+    "settings.tsx:84-90 downloadScript uses fetch+blob+<a download> pattern and revokes the object URL after 5s. Correct.",
+    "settings.tsx:167-176 the 'highlighted' state is derived from scanner.course_id or the local Inkorg course id when scanner.course_id is null — so 'Inkorg' is always highlighted by default (good UX)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_scanner.py (new - 15 scanner tests, all passing)"
+  ],
+  "success_rate": {
+    "backend": "100% (15/15 scanner tests + 9/9 regression word+email tests = 24/24)",
+    "frontend": "100% (all 7 UI assertions in the scanner playbook pass on web 390x844 + regression ZIP+Word button verified)"
+  },
+  "seed_data_creation": "Scanner tests create their own TEST_Scanner_* courses + 'Skanning ...' documents and delete them in teardown. The UI playwright run creates TEST_UI_Scanner_Folder course and TEST_UI_Regression_Doc, both deleted at the end.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The NAPS2 scanner backend + web Settings UI are fully working. Login: test@copythat.app / 246810. For UI tests, set localStorage['copythat.token']=JSON.stringify(token) after POST /api/auth/verify, then navigate to /settings. Scanner testIDs: scanner-card, scan-folder-<courseId>, scan-key, scan-new-key, scan-script. The .cmd script is Windows-only and cannot be executed in this environment — only its content and headers are verified. If adding more flows: /api/scanner/upload accepts multipart with any filename and dispatches via the same pipeline as /uploads/complete (ingest()), so page statuses follow the normal queued->processing->done/error path. AI keys are still not configured so pages end in status='error' with 'AI-nyckel saknas'."
+}
