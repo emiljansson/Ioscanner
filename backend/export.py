@@ -126,12 +126,30 @@ async def build_files(doc: dict, html: bool = False, pdf: bool = False) -> dict:
             "captions": "\n".join(caption_lines)}
 
 
+FONTS_DIR = Path(__file__).parent / "fonts"  # Carlito = metric-compatible with Calibri (Word's look)
+PDF_MARGIN = 72  # pt, like Word's 2.54 cm
 PDF_CSS = """
-body { font-family: sans-serif; font-size: 11pt; line-height: 1.45; color: #111; }
-h1 { font-size: 20pt; } h2 { font-size: 16pt; } h3 { font-size: 13pt; }
-figure { margin: 8pt 0; text-align: center; }
-figcaption { font-size: 9.5pt; color: #444; text-align: center; margin-top: 3pt; }
-table { border-collapse: collapse; } th, td { border: 1px solid #999; padding: 3px 6px; }
+@font-face { font-family: carlito; src: url(Carlito-Regular.ttf); }
+@font-face { font-family: carlito; src: url(Carlito-Bold.ttf); font-weight: bold; }
+@font-face { font-family: carlito; src: url(Carlito-Italic.ttf); font-style: italic; }
+@font-face { font-family: carlito; src: url(Carlito-BoldItalic.ttf); font-weight: bold; font-style: italic; }
+* { font-family: carlito; }
+body { font-size: 12pt; line-height: 1.22; color: #000; }
+p { margin: 9pt 0; }
+h1, h2, h3, h4, h5, h6 { color: #0F4761; font-weight: normal; margin: 8pt 0 4pt 0; }
+h1 { font-size: 20pt; margin-top: 18pt; }
+h2 { font-size: 16pt; }
+h3 { font-size: 14pt; }
+h4 { font-size: 12pt; font-style: italic; }
+h5, h6 { font-size: 12pt; }
+li { margin: 1.8pt 0; }
+li p { margin: 1.8pt 0; }
+figure { margin: 9pt 0; text-align: center; }
+figcaption { font-style: italic; text-align: center; margin: 0 0 6pt 0; }
+table { border-collapse: collapse; margin: 9pt 0; }
+th, td { border: 0.5pt solid #000; padding: 2pt 5pt; }
+th { font-weight: bold; }
+code { font-family: monospace; font-size: 10.5pt; }
 """
 
 
@@ -218,7 +236,9 @@ def _html_to_pdf(body_html: str, resource_dir: str) -> bytes:
     buf = io.BytesIO()
     writer = fitz.DocumentWriter(buf)
     page_rect = fitz.paper_rect("a4")
-    area = page_rect + (56, 56, -56, -56)
+    area = page_rect + (PDF_MARGIN, PDF_MARGIN, -PDF_MARGIN, -PDF_MARGIN)
+    archive = fitz.Archive(resource_dir)
+    archive.add(str(FONTS_DIR))
     state = {"dev": None, "y": area.y0}
 
     def new_page():
@@ -227,7 +247,7 @@ def _html_to_pdf(body_html: str, resource_dir: str) -> bytes:
         state["dev"], state["y"] = writer.begin_page(page_rect), area.y0
 
     def story(b):
-        return fitz.Story(html=b, user_css=PDF_CSS, archive=resource_dir)
+        return fitz.Story(html=b, user_css=PDF_CSS, archive=archive)
 
     new_page()
     for b in blocks:

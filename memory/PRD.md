@@ -46,3 +46,4 @@ templates, settings{id:"global",speed_mode,primary_provider}, uploads.
 - Scanner (NAPS2): per-user scan_key + scan_course_id on users. Endpoints GET/PUT /api/scanner, POST /api/scanner/key, GET /api/scanner/script?base= (personal copythat-skanna.cmd: runs NAPS2.Console -o pdf then curl upload; drag&drop files also), POST /api/scanner/upload (X-Scan-Key header) -> new doc "Skanning YYYY-MM-DD HH:MM" in chosen folder (fallback Inkorg), AI starts directly. Settings UI card "Skanner (NAPS2)".
 - PDF: figures sized like Word (1px=1pt, max 420x640pt) and laid out block-by-block so figures move to next page instead of shrinking. users.scan_key index.
 - Delete fix: archive reloads docs on focus; doc delete guarded against double tap (404 = success); page delete optimistic; course delete removes immediately.
+- PDF styled like Word: bundled Carlito fonts (backend/fonts, Calibri-metric), 12pt body, headings #0F4761 20/16/14pt, A4 2.54cm margins.
