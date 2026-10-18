@@ -1,7 +1,10 @@
 """Shared infrastructure: config, Mongo, auth (JWT), CommHub client."""
 import os
+import hmac
 import time
 import uuid
+import hashlib
+import secrets
 import logging
 import datetime as dt
 from pathlib import Path
@@ -45,29 +48,56 @@ def _commhub_error(resp: httpx.Response) -> str:
         return resp.text[:300]
 
 
+OTP_TTL = 600
+OTP_MAX_ATTEMPTS = 5
+
+
+def _hash_code(email: str, code: str) -> str:
+    return hashlib.sha256(f"{JWT_SECRET}:{email}:{code}".encode()).hexdigest()
+
+
 async def commhub_request_otp(email: str) -> None:
-    async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.post(f"{COMMHUB_BASE}/public/{COMMHUB_APP_ID}/request-otp", json={"email": email})
-    if r.status_code >= 400:
-        log.error("CommHub request-otp %s: %s", r.status_code, r.text[:300])
-        detail = _commhub_error(r)
-        if "public api not enabled" in detail.lower():
-            raise HTTPException(503, "Inloggning via e-postkod är inte aktiverad ännu. Ägaren behöver slå på "
-                                     "”Public API” för appen i CommHub (Applications → App → Settings → Public API).")
+    """Generate a 6-digit single-use code and email it via CommHub (API-key authenticated)."""
+    last = await db.login_codes.find_one({"email": email}, sort=[("created", -1)])
+    if last and time.time() - last["created"] < 30:
+        raise HTTPException(429, "Vänta en halv minut innan du begär en ny kod")
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    html = (
+        '<table role="presentation" width="100%"><tr><td style="padding:24px;font-family:Arial,sans-serif;color:#1F2328">'
+        '<p style="font-size:16px">Din inloggningskod till CopyThat:</p>'
+        f'<p style="font-size:32px;font-weight:bold;letter-spacing:6px">{code}</p>'
+        '<p style="font-size:14px;color:#6B6F76">Koden gäller i 10 minuter och kan bara användas en gång. '
+        'Om du inte försökte logga in kan du ignorera det här mejlet.</p></td></tr></table>'
+    )
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.post(
+                f"{COMMHUB_BASE}/email/send",
+                headers={"X-API-Key": COMMHUB_API_KEY},
+                json={"app_id": COMMHUB_APP_ID, "to": [email], "subject": f"Din kod till CopyThat: {code}",
+                      "html_content": html, "text_content": f"Din inloggningskod till CopyThat: {code} (gäller i 10 minuter)",
+                      "from_name": "CopyThat"},
+            )
+    except httpx.HTTPError as e:
+        log.error("CommHub email/send network error: %s", e)
         raise HTTPException(503, "Det gick inte att skicka koden just nu. Försök igen om en stund.")
+    if r.status_code >= 400:
+        log.error("CommHub email/send %s: %s", r.status_code, r.text[:300])
+        raise HTTPException(503, "Det gick inte att skicka koden just nu. Försök igen om en stund.")
+    await db.login_codes.delete_many({"email": email})
+    await db.login_codes.insert_one({"email": email, "hash": _hash_code(email, code), "created": time.time(),
+                                     "attempts": 0})
 
 
 async def commhub_verify_otp(email: str, code: str) -> bool:
-    async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.post(
-            f"{COMMHUB_BASE}/public/{COMMHUB_APP_ID}/verify-otp", json={"email": email, "code": code}
-        )
-    if r.status_code in (400, 401, 403, 404, 422):
+    rec = await db.login_codes.find_one({"email": email}, sort=[("created", -1)])
+    if not rec or time.time() - rec["created"] > OTP_TTL or rec["attempts"] >= OTP_MAX_ATTEMPTS:
         return False
-    if r.status_code >= 400:
-        log.error("CommHub verify-otp %s: %s", r.status_code, r.text[:300])
-        raise HTTPException(502, "Inloggningstjänsten svarar inte just nu")
-    return bool(r.json().get("token"))
+    if not hmac.compare_digest(rec["hash"], _hash_code(email, code)):
+        await db.login_codes.update_one({"_id": rec["_id"]}, {"$inc": {"attempts": 1}})
+        return False
+    await db.login_codes.delete_many({"email": email})  # single use
+    return True
 
 
 async def commhub_upload(data: bytes, filename: str, content_type: str, category: str = "images") -> dict:

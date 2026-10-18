@@ -1,0 +1,35 @@
+{
+  "summary": "Verified the new OTP flow: backend generates a 6-digit single-use code (10 min TTL, 5-attempt lockout, 30 s resend rate-limit, SHA-256 hashed in db.login_codes) and sends it via CommHub POST /api/email/send with X-API-Key — no CommHub Public API dependency anymore. Pytest TestAuth 12/12 green, full suite 39/39 green. Covered: delivered@resend.dev request-code -> 200 (real email) + immediate re-request -> 429 Swedish 'Vänta en halv minut…'; seeded hash correct code -> 200 token; reuse of same code -> 401 (single-use); expired record (created-601 s) -> 401; 5 wrong attempts + correct code -> 401 (lockout); unknown email verify -> 403; test@copythat.app + 246810 -> 200 token. Removed obsolete test_request_code_owner_commhub_public_api_disabled_503 (owner was NOT called in this iteration — the new path would send a real email). Frontend (390x844): test credentials login reaches /archive; unknown email shows 'Den här e-postadressen är inte inbjuden till CopyThat'; wrong code shows 'Fel eller utgången kod – begär en ny kod' in testID=login-error. No red screen, no deprecated-package or React Native issues detected.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_backend.py",
+    "/app/test_reports/pytest/pytest_results_iter4.xml",
+    "/app/test_reports/pytest/pytest_results_iter4_auth.xml"
+  ],
+  "action_items": [
+    "No code changes required – new OTP flow fully functional. Consider adding a backend admin tool / CLI to purge db.login_codes if a user is locked out before TTL expiry (currently they must wait 10 min or request fresh code which deletes stale rec).",
+    "Minor hardening (optional): /api/auth/request-code currently returns 403 for unknown emails which allows user enumeration. Owner should decide if symmetrical 200 should be returned instead (trade-off: UX vs. privacy)."
+  ],
+  "critical_code_review_comments": [
+    "core.commhub_request_otp: good – stores sha256(JWT_SECRET:email:code), deletes any prior records before insert so a successful send resets attempts; 30 s resend check is correct (uses last.created even when still inside TTL).",
+    "core.commhub_verify_otp: uses hmac.compare_digest – constant-time compare, good. Single-use enforced via delete_many on success. Lockout at >=5 attempts verified in test.",
+    "server.verify_code: regex strips non-digits then checks len(code)==6 – robust against spaces/dashes pasted from email.",
+    "No background cleanup job for expired login_codes – TTL index on 'created' (as a Date, not epoch float) would be nicer; current float timestamp works but Mongo TTL index cannot be set on numeric field. Minor; records are overwritten on next request.",
+    "server.py exposes OWNER_EMAIL from env but there's no rate-limit protection against enumeration via unknown-email 403; see action_item above."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_backend.py (removed obsolete owner-503 test; added 5 new OTP-flow tests: delivered 200→429, seeded single-use, expired-401, 5-attempt-lockout, unknown-email-verify-403)"
+  ],
+  "success_rate": {"backend": "100% (39/39, incl. 12/12 auth)", "frontend": "100% of requested flows (test-user→/archive, unknown→403 msg, wrong code→401 msg) on 390x844"},
+  "seed_data_creation": "No new seed users; delivered@resend.dev was already seeded by main agent. Tests seed temporary db.login_codes records (hashed) directly in Mongo and clean up afterwards. Owner emil@jawel.se intentionally NOT called by any test to avoid sending a real email.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The CommHub Public API path (/public/{app}/request-otp) is fully removed. All auth uses: (1) backend-generated 6-digit code, (2) CommHub POST /api/email/send with X-API-Key header for delivery, (3) local verify against SHA-256(JWT_SECRET:email:code) in db.login_codes. Static test code 246810 for test@copythat.app bypasses CommHub (controlled by TEST_LOGIN_EMAIL/TEST_LOGIN_CODE in backend/.env). Full regression /app/backend/tests/test_backend.py now has 39 tests. Frontend testIDs stable: login-email, login-send-code, login-code, login-verify, login-error. Do NOT call request-code for emil@jawel.se — it sends a real email.",
+  "rca_of_issue": "N/A – this iteration was a feature validation, not a bug fix. The 502/503 Public-API issue from iteration_3 is now obsolete because the flow no longer calls CommHub /public/{app}/request-otp. The new flow was validated end-to-end with 12 auth tests covering happy path, rate-limit, expiry, lockout, single-use and unknown-email cases."
+}

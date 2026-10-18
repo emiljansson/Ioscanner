@@ -55,16 +55,89 @@ class TestAuth:
         r = s.get(f"{BASE_URL}/api/auth/me")
         assert r.status_code == 401
 
-    def test_request_code_owner_commhub_public_api_disabled_503(self, api_client):
-        """Regression: owner emil@jawel.se with CommHub Public API disabled must
-        return 503 (not 502) with Swedish message mentioning Public API."""
-        r = api_client.post(f"{BASE_URL}/api/auth/request-code",
-                            json={"email": "emil@jawel.se"})
-        assert r.status_code == 503, r.text
-        detail = r.json().get("detail", "")
-        assert "Public API" in detail
-        # Must be Swedish, not English
-        assert "aktiverad" in detail or "Ägaren" in detail
+    # ---------- New OTP flow (CommHub email/send + local hash store) ----------
+    def test_request_code_delivered_ok_then_429(self, api_client):
+        """Invited delivered@resend.dev should receive 200 from request-code
+        (real email via CommHub /api/email/send). Immediate second request must
+        be rate-limited to 429 with Swedish message."""
+        import pymongo
+        mcli = pymongo.MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+        # Clear any prior rate-limit record so the first call is not throttled
+        mcli.login_codes.delete_many({"email": "delivered@resend.dev"})
+        r1 = api_client.post(f"{BASE_URL}/api/auth/request-code",
+                             json={"email": "delivered@resend.dev"})
+        assert r1.status_code == 200, r1.text
+        assert r1.json().get("ok") is True
+        # Immediate re-request => 429 Swedish
+        r2 = api_client.post(f"{BASE_URL}/api/auth/request-code",
+                             json={"email": "delivered@resend.dev"})
+        assert r2.status_code == 429, r2.text
+        detail = r2.json().get("detail", "")
+        assert "halv minut" in detail or "Vänta" in detail, detail
+        # Cleanup to avoid affecting next runs' rate limit windows
+        mcli.login_codes.delete_many({"email": "delivered@resend.dev"})
+
+    def _seed_login_code(self, email: str, code: str, created_offset: float = 0.0,
+                         attempts: int = 0) -> None:
+        """Insert a known hashed OTP record so we can test verify locally."""
+        import hashlib, pymongo
+        mcli = pymongo.MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+        secret = os.environ["JWT_SECRET"]
+        h = hashlib.sha256(f"{secret}:{email}:{code}".encode()).hexdigest()
+        mcli.login_codes.delete_many({"email": email})
+        mcli.login_codes.insert_one({
+            "email": email, "hash": h,
+            "created": time.time() + created_offset,
+            "attempts": attempts,
+        })
+
+    def test_verify_seeded_correct_code_single_use(self, api_client):
+        email = "delivered@resend.dev"
+        code = "135790"
+        self._seed_login_code(email, code)
+        r = api_client.post(f"{BASE_URL}/api/auth/verify",
+                            json={"email": email, "code": code})
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert "token" in data and "user" in data
+        assert data["user"]["email"] == email
+        # Reuse must fail (single-use)
+        r2 = api_client.post(f"{BASE_URL}/api/auth/verify",
+                             json={"email": email, "code": code})
+        assert r2.status_code == 401, r2.text
+
+    def test_verify_expired_code_401(self, api_client):
+        email = "delivered@resend.dev"
+        code = "246813"
+        # 601 s in the past => past OTP_TTL (600 s)
+        self._seed_login_code(email, code, created_offset=-601.0)
+        r = api_client.post(f"{BASE_URL}/api/auth/verify",
+                            json={"email": email, "code": code})
+        assert r.status_code == 401, r.text
+
+    def test_verify_lockout_after_5_wrong_attempts(self, api_client):
+        email = "delivered@resend.dev"
+        correct = "908070"
+        self._seed_login_code(email, correct)
+        # 5 wrong attempts
+        for _ in range(5):
+            r = api_client.post(f"{BASE_URL}/api/auth/verify",
+                                json={"email": email, "code": "000000"})
+            assert r.status_code == 401, r.text
+        # Even correct code now rejected
+        r = api_client.post(f"{BASE_URL}/api/auth/verify",
+                            json={"email": email, "code": correct})
+        assert r.status_code == 401, r.text
+        # Cleanup
+        import pymongo
+        pymongo.MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]] \
+            .login_codes.delete_many({"email": email})
+
+    def test_verify_unknown_email_403(self, api_client):
+        r = api_client.post(f"{BASE_URL}/api/auth/verify",
+                            json={"email": "ghost-user-xyz@example.com",
+                                  "code": "123456"})
+        assert r.status_code == 403, r.text
 
 
 # ---------- Settings & admin (member perspective) ----------
