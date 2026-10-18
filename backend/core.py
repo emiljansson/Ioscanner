@@ -50,7 +50,11 @@ async def commhub_request_otp(email: str) -> None:
         r = await c.post(f"{COMMHUB_BASE}/public/{COMMHUB_APP_ID}/request-otp", json={"email": email})
     if r.status_code >= 400:
         log.error("CommHub request-otp %s: %s", r.status_code, r.text[:300])
-        raise HTTPException(502, f"Kunde inte skicka koden: {_commhub_error(r)}")
+        detail = _commhub_error(r)
+        if "public api not enabled" in detail.lower():
+            raise HTTPException(503, "Inloggning via e-postkod är inte aktiverad ännu. Ägaren behöver slå på "
+                                     "”Public API” för appen i CommHub (Applications → App → Settings → Public API).")
+        raise HTTPException(503, "Det gick inte att skicka koden just nu. Försök igen om en stund.")
 
 
 async def commhub_verify_otp(email: str, code: str) -> bool:

@@ -55,6 +55,17 @@ class TestAuth:
         r = s.get(f"{BASE_URL}/api/auth/me")
         assert r.status_code == 401
 
+    def test_request_code_owner_commhub_public_api_disabled_503(self, api_client):
+        """Regression: owner emil@jawel.se with CommHub Public API disabled must
+        return 503 (not 502) with Swedish message mentioning Public API."""
+        r = api_client.post(f"{BASE_URL}/api/auth/request-code",
+                            json={"email": "emil@jawel.se"})
+        assert r.status_code == 503, r.text
+        detail = r.json().get("detail", "")
+        assert "Public API" in detail
+        # Must be Swedish, not English
+        assert "aktiverad" in detail or "Ägaren" in detail
+
 
 # ---------- Settings & admin (member perspective) ----------
 class TestSettingsAndAdmin:

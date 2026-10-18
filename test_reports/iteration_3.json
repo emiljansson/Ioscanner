@@ -1,0 +1,30 @@
+{
+  "summary": "Verified the 502 → 503 login error fix end-to-end against public EXPO_PUBLIC_BACKEND_URL. Backend: POST /api/auth/request-code with emil@jawel.se now returns HTTP 503 with Swedish detail 'Inloggning via e-postkod är inte aktiverad ännu. Ägaren behöver slå på ”Public API” för appen i CommHub (Applications → App → Settings → Public API).' (no 502, no English). Regressions all pass: unknown email → 403 'Den här e-postadressen är inte inbjuden till CopyThat'; invalid format → 422 'Ange en giltig e-postadress'; test@copythat.app → 200 and verify with code 246810 → JWT token. Pytest TestAuth 8/8 green (added test_request_code_owner_commhub_public_api_disabled_503). Frontend (390x844 mobile viewport): login flow for owner shows the Swedish Public-API message in testID=login-error, stays on email step without crash/red-screen; unknown email also shows Swedish 403 message; test credentials navigate to /archive. No red screen, no React Native issues, no deprecated-package issues.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_backend.py",
+    "/app/test_reports/pytest/pytest_results_iter3.xml"
+  ],
+  "action_items": [
+    "No code changes required – fix verified. When the owner enables Public API in CommHub for app f2afb946-…, re-run request-code to confirm it transitions to 200/OK."
+  ],
+  "critical_code_review_comments": [
+    "core.commhub_request_otp now correctly maps the CommHub 403 'Public API not enabled' body into HTTPException(503, Swedish) via case-insensitive substring match – robust to future CommHub text tweaks only if 'public api not enabled' phrase remains; add a wider fallback if CommHub reorders words.",
+    "commhub_verify_otp still raises HTTPException(502, 'Inloggningstjänsten svarar inte just nu') for 5xx and non-user errors; this is correct since 400/401/403/404/422 are already treated as 'wrong code'. Consider also 503 here for symmetry if CommHub returns the same Public-API 403 on verify once a code was never sent."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_backend.py (added test_request_code_owner_commhub_public_api_disabled_503)"
+  ],
+  "success_rate": {"backend": "100% (8/8 auth, incl. new 503 regression)", "frontend": "100% of requested flows (owner 503, unknown 403, test user 246810 → /archive) on 390x844"},
+  "seed_data_creation": "None. test@copythat.app and emil@jawel.se already seeded in users collection by backend startup.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The 502-on-iPhone bug is fully resolved at the API layer (503 + Swedish detail). Full regression suite /app/backend/tests/test_backend.py now has 35 tests (34 previous + 1 new owner 503). Pytest file reads EXPO_PUBLIC_BACKEND_URL from frontend/.env and TEST_LOGIN_EMAIL/CODE from backend/.env. Frontend testIDs confirmed stable: login-email, login-send-code, login-code, login-verify, login-error. CommHub Public API for app f2afb946-… is still disabled by design; do not try to enable it.",
+  "rca_of_issue": "Root cause confirmed in backend logs: CommHub /public/{app_id}/request-otp returned 403 with body {'detail':'Public API not enabled for this app'}. The previous code mapped this to HTTPException(502, English). The fix in /app/backend/core.py:48-57 inspects the CommHub detail; when it contains 'public api not enabled' (case-insensitive) it raises 503 with a Swedish, actionable message pointing the owner to CommHub → Applications → App → Settings → Public API. Any other CommHub failure falls through to the generic 503 'Det gick inte att skicka koden just nu. Försök igen om en stund.' Verified by direct curl (HTTP 503 + Swedish body) and by rendering in testID=login-error on 390x844 mobile viewport without crash."
+}
