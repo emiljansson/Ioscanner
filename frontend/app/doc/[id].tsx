@@ -12,6 +12,7 @@ import { PageCard } from "@/src/components/PageCard";
 import { AiPanel } from "@/src/components/AiPanel";
 import { MarkdownView } from "@/src/components/MarkdownView";
 import { ScanModal } from "@/src/components/ScanModal";
+import { FiguresPanel, collectFigures } from "@/src/components/FiguresPanel";
 import { pickFiles, useDropzone } from "@/src/files";
 import { colors, radius } from "@/src/theme";
 
@@ -32,6 +33,7 @@ export default function DocScreen() {
   const [genDraft, setGenDraft] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
+  const [figsOpen, setFigsOpen] = useState(false);
   const mounted = useRef(true);
 
   const load = useCallback(async () => {
@@ -180,6 +182,7 @@ export default function DocScreen() {
         <Button testID="ai-open" small icon="sparkles-outline" label="Bearbeta med AI" onPress={() => setAiOpen((o) => !o)} />
         <Button testID="download-docx" small icon="document-outline" label="Word" onPress={() => download("docx")} />
         <Button testID="download-zip" small icon="archive-outline" label="ZIP" onPress={() => download("zip")} />
+        <Button testID="figures-open" small icon="images-outline" label={`Bilder (${collectFigures(doc).filter((f) => !f.deleted).length})`} onPress={() => setFigsOpen(true)} />
         <Button testID="copy-all" small icon="copy-outline" label="Kopiera text" onPress={copyAll} />
         {!isGen && pages.length > 1 && <Button small icon="swap-vertical" label="Sortera efter sidnummer" onPress={async () => setDoc(await api<Doc>(`/documents/${id}/sort`, { method: "POST" }))} />}
       </View>
@@ -257,6 +260,7 @@ export default function DocScreen() {
           <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }}>{panel}</SafeAreaView>
         </Modal>
       )}
+      {figsOpen && <FiguresPanel doc={doc} onClose={() => setFigsOpen(false)} onPageChanged={updatePage} onDownloadZip={() => download("zip")} />}
       {scanOpen && (
         <ScanModal
           visible

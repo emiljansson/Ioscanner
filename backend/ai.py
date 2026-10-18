@@ -35,7 +35,7 @@ MARKDOWN RULES:
 - Math: inline LaTeX in $...$, display formulas in $$...$$ on their own lines. Chemical formulas also as LaTeX (e.g. $\\mathrm{H_2O}$).
 - Tables: GitHub pipe tables with a header row.
 - OMIT running headers, footers and page numbers.
-- Photos, diagrams, charts, maps and illustrations: put the placeholder [[FIGURE:id]] on its own line where the figure appears, and add it to "figures" with box_2d normalized 0-1000 as [ymin, xmin, ymax, xmax] tightly covering the whole figure (excluding the caption). Do not transcribe text inside figures. The caption (e.g. "Figur 3.2 ...") goes ONLY in "caption", not in markdown. Do not mark decorative lines, logos-in-header or plain text boxes as figures.
+- Photos, illustrations, diagrams, charts, maps, product images and logos/emblems: put the placeholder [[FIGURE:id]] on its own line where the image appears, and add it to "figures" with box_2d normalized 0-1000 as [ymin, xmin, ymax, xmax] tightly covering the whole image (excluding the caption). Do not transcribe text inside images. The caption (e.g. "Figur 3.2 ...") goes ONLY in "caption", not in markdown. Do not mark decorative lines, background colors or plain text boxes.
 - Handwritten notes in the margin: add as a blockquote "> Anteckning: ...".
 - NEVER invent text. Keep the original language verbatim."""
 
@@ -287,6 +287,29 @@ async def read_page(image_jpeg: bytes, settings: dict, prev_markdown: str | None
         "mode": mode,
         "verifiers": ran,
     }
+
+
+# ---------------- Free instructions ----------------
+FIGURE_PROMPT = """Find every image region on this page: photos, illustrations, drawings, diagrams, charts, maps, product images, logos and emblems.
+Ignore plain text, tables made only of text, decorative lines and background colors.
+Return STRICT JSON: {"figures": [{"box_2d": [ymin, xmin, ymax, xmax], "caption": "<caption text near the image or a short Swedish description>"}]}
+box_2d is normalized 0-1000 and must tightly cover the whole image. Return {"figures": []} if there are none."""
+
+
+async def detect_figures(image_jpeg: bytes, settings: dict) -> list[dict]:
+    """Dedicated image-finding pass (Gemini preferred – best at spatial boxes)."""
+    keys = await get_ai_keys()
+    provider = "gemini" if keys.get("gemini") else pick_primary(settings, keys)
+    raw = await call_ai(provider, MODELS[provider]["fast"], FIGURE_PROMPT, image_jpeg, TIMEOUTS["fast"], want_json=True)
+    out = []
+    for i, f in enumerate(strip_json(raw).get("figures") or [], 1):
+        box = f.get("box_2d")
+        if isinstance(box, list) and len(box) == 4:
+            try:
+                out.append({"n": i, "box_2d": [float(v) for v in box], "caption": str(f.get("caption") or "")[:300]})
+            except (TypeError, ValueError):
+                continue
+    return out
 
 
 # ---------------- Free instructions ----------------

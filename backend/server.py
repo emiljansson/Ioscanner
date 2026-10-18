@@ -20,6 +20,7 @@ api = APIRouter(prefix="/api")
 UPLOADS = Path(__file__).parent / "uploads_tmp"
 UPLOADS.mkdir(exist_ok=True)
 MAX_UPLOAD_BYTES = 500 * 1024 * 1024
+REF_CAPTIONS = re.compile(r"!\[([^\]]*)\]\(fig:([a-f0-9]+)\)")
 
 
 def clean(doc: dict | None) -> dict | None:
@@ -432,12 +433,13 @@ class ProcessIn(BaseModel):
     course_id: str | None = None
 
 
-async def run_process(new_doc_id: str, material: str, figmap: dict, instruction: str) -> None:
+async def run_process(new_doc_id: str, material: str, figmap: dict, instruction: str, captions: dict) -> None:
     try:
         out = strip_html(await run_instruction(material, instruction, await pipeline.settings_doc()))
         used = {fid: url for fid, url in figmap.items() if f"fig:{fid}" in out}
         await db.documents.update_one({"id": new_doc_id}, {"$set": {
-            "markdown": out, "figures": used, "status": "ready", "updated_at": now()}})
+            "markdown": out, "figures": used, "source_figures": figmap, "figure_captions": captions,
+            "status": "ready", "updated_at": now()}})
     except Exception as e:
         msg = str(e) if isinstance(e, AIError) else f"Oväntat fel: {e}"
         log.warning("process failed: %s", msg)
@@ -465,6 +467,7 @@ async def process(body: ProcessIn, bg: BackgroundTasks, user: dict = Depends(cur
         titles.append(d["title"])
         course_id = course_id or d["course_id"]
     material = "\n\n".join(x for x in parts if x.strip())
+    captions = {fid: c for c, fid in REF_CAPTIONS.findall(material)}
     if not material.strip():
         raise HTTPException(422, "Det valda materialet innehåller ingen läst text än")
     await own("courses", course_id, user)
@@ -474,7 +477,7 @@ async def process(body: ProcessIn, bg: BackgroundTasks, user: dict = Depends(cur
          "source_page_ids": body.page_ids, "markdown": "", "figures": {}, "created_at": now(),
          "updated_at": now()}
     await db.documents.insert_one(dict(d))
-    bg.add_task(run_process, d["id"], material, figmap, body.instruction)
+    bg.add_task(run_process, d["id"], material, figmap, body.instruction, captions)
     return clean(d)
 
 

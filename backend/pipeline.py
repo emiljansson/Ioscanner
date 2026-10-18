@@ -9,7 +9,7 @@ from PIL import Image, ImageOps
 from pillow_heif import register_heif_opener
 
 from core import db, new_id, now, commhub_upload, fetch_bytes, log
-from ai import read_page, AIError
+from ai import read_page, detect_figures, AIError
 
 register_heif_opener()
 
@@ -128,15 +128,25 @@ async def process_page(page_id: str, rescan: bool = False) -> None:
             with Image.open(io.BytesIO(full)) as im:
                 ai_jpg = _jpeg(im.convert("RGB"), 2000, 85)
             attempts = page.get("attempts", 0) + 1
-            res = await read_page(ai_jpg, await settings_doc(),
+            settings = await settings_doc()
+            res = await read_page(ai_jpg, settings,
                                   prev_markdown=page["markdown"] if rescan and page.get("markdown") else None,
                                   attempts=attempts, prev_conf=page.get("confidence") or 0)
+            found = res.pop("figures")
+            md = res.pop("markdown")
+            if not found:
+                # The reading pass found no images – run a dedicated image-finding pass.
+                try:
+                    found = await detect_figures(ai_jpg, settings)
+                    if found:
+                        md = md.rstrip() + "\n\n" + "\n\n".join(f"[[FIGURE:{f['n']}]]" for f in found)
+                except Exception as e:
+                    log.warning("figure detection failed for %s: %s", page_id, e)
             figures = []
-            for f in res.pop("figures"):
+            for f in found:
                 stored = await crop_and_store(full, page_id, f["box_2d"])
                 if stored:
                     figures.append({**f, **stored, "deleted": False})
-            md = res.pop("markdown")
             kept = {f["n"] for f in figures}
             md = re.sub(r"\[\[FIGURE:(\d+)\]\]", lambda m: m.group(0) if int(m.group(1)) in kept else "", md)
             await db.pages.update_one({"id": page_id}, {"$set": {

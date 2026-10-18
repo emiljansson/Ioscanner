@@ -128,6 +128,8 @@ export type Doc = {
   instruction?: string;
   markdown?: string;
   figures?: Record<string, string>;
+  source_figures?: Record<string, string>;
+  figure_captions?: Record<string, string>;
   page_counts?: Record<string, number>;
   page_total?: number;
   pages?: Page[];

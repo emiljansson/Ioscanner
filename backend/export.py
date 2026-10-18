@@ -50,17 +50,41 @@ async def document_markdown(doc: dict) -> tuple[str, dict]:
     return md, figmap
 
 
+async def figure_labels(doc: dict) -> dict:
+    """{fig_id: (file name, caption line)} for every non-deleted image, in page order."""
+    out: dict = {}
+    if doc.get("kind") == "generated":
+        caps = doc.get("figure_captions") or {}
+        for i, fid in enumerate(doc.get("source_figures") or doc.get("figures") or {}, 1):
+            out[fid] = (f"bild_{i:02d}.jpg", caps.get(fid, ""))
+        return out
+    pages = await db.pages.find({"document_id": doc["id"], "status": "done"}, {"_id": 0, "figures": 1}).sort("order", 1).to_list(2000)
+    i = 0
+    for pi, p in enumerate(pages, 1):
+        for f in p.get("figures", []):
+            if not f.get("deleted"):
+                i += 1
+                out[f["id"]] = (f"sida_{pi:02d}_bild_{i:02d}.jpg", f"Sida {pi}: {f.get('caption') or ''}".strip())
+    return out
+
+
 async def build_files(doc: dict) -> dict:
-    """Return {"docx": bytes, "txt": str, "images": {name: bytes}}."""
+    """Return {"docx": bytes, "txt": str, "images": {name: bytes}, "captions": str}.
+
+    The ZIP gets EVERY extracted image (not only those referenced in the text)."""
     md, figmap = await document_markdown(doc)
-    used = [fid for _, fid in REF_RE.findall(md) if fid in figmap]
+    allfigs = {**figmap, **(doc.get("source_figures") or {})}
+    labels = await figure_labels(doc)
     images: dict[str, bytes] = {}
     names: dict[str, str] = {}
-    for i, fid in enumerate(dict.fromkeys(used), 1):
-        name = f"bild_{i:02d}.jpg"
+    caption_lines = []
+    for fid, (name, cap) in labels.items():
+        if fid not in allfigs:
+            continue
         try:
-            images[name] = await fetch_bytes(figmap[fid])
+            images[name] = await fetch_bytes(allfigs[fid])
             names[fid] = name
+            caption_lines.append(f"{name}\t{cap}")
         except Exception:
             continue
     final_md = REF_RE.sub(lambda m: f"![{m.group(1)}](images/{names[m.group(2)]})" if m.group(2) in names else "", md)
@@ -80,7 +104,7 @@ async def build_files(doc: dict) -> dict:
             txt = pypandoc.convert_file(str(src), "plain", format=PANDOC_FMT, extra_args=["--wrap=none"])
             return out.read_bytes(), txt
     docx, txt = await asyncio.to_thread(_convert)
-    return {"docx": docx, "txt": txt, "images": images}
+    return {"docx": docx, "txt": txt, "images": images, "captions": "\n".join(caption_lines)}
 
 
 def safe_name(title: str) -> str:
@@ -95,4 +119,6 @@ def make_zip(files: dict, base: str) -> bytes:
         z.writestr(f"{base}.txt", files["txt"])
         for n, b in files["images"].items():
             z.writestr(f"bilder/{n}", b)
+        if files.get("captions"):
+            z.writestr("bilder/bildtexter.txt", files["captions"] + "\n")
     return buf.getvalue()
