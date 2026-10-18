@@ -122,10 +122,24 @@ export default function DocScreen() {
     }
   };
 
+  const [deleting, setDeleting] = useState(false);
   const deleteDoc = () => {
+    if (deleting) return;
     const go = async () => {
-      await api(`/documents/${id}`, { method: "DELETE" });
-      router.back();
+      setDeleting(true);
+      try {
+        await api(`/documents/${id}`, { method: "DELETE" });
+      } catch (e: any) {
+        if (e?.status !== 404) {
+          // 404 = already deleted (e.g. double tap) — treat as success
+          setDeleting(false);
+          flash(e.message);
+          return;
+        }
+      }
+      mounted.current = false; // stop polling this (now deleted) document
+      if (router.canGoBack()) router.back();
+      else router.replace("/archive");
     };
     if (Platform.OS === "web") {
       if (window.confirm("Ta bort dokumentet permanent?")) go();
@@ -145,8 +159,14 @@ export default function DocScreen() {
   };
 
   const deletePage = async (pid: string) => {
-    await api(`/pages/${pid}`, { method: "DELETE" });
+    // Remove at once in the UI; the server call follows.
+    setDoc((d) => (d ? { ...d, pages: d.pages?.filter((x) => x.id !== pid) } : d));
     setSelected((s) => s.filter((x) => x !== pid));
+    try {
+      await api(`/pages/${pid}`, { method: "DELETE" });
+    } catch (e: any) {
+      if (e?.status !== 404) flash(e.message);
+    }
     load();
   };
 
@@ -184,7 +204,7 @@ export default function DocScreen() {
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
         <TextInput testID="doc-title" style={styles.title} value={title} onChangeText={setTitle} onBlur={saveTitle} onSubmitEditing={saveTitle} />
-        <Pressable onPress={deleteDoc} style={styles.icon} accessibilityLabel="Ta bort dokument" testID="doc-delete">
+        <Pressable onPress={deleteDoc} disabled={deleting} style={[styles.icon, deleting && { opacity: 0.4 }]} accessibilityLabel="Ta bort dokument" testID="doc-delete">
           <Ionicons name="trash-outline" size={20} color={colors.danger} />
         </Pressable>
       </View>

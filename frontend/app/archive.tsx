@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator, Alert, FlatList, Platform, Pressable, RefreshControl, StyleSheet, Text, TextInput, View, useWindowDimensions,
 } from "react-native";
@@ -52,10 +52,14 @@ export default function Archive() {
     }
   }, []);
 
+  // Reload on every return to the archive, so documents deleted elsewhere disappear directly.
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
   useFocusEffect(
     useCallback(() => {
       loadCourses();
-    }, [loadCourses])
+      if (selectedRef.current) loadDocs(selectedRef.current);
+    }, [loadCourses, loadDocs])
   );
   useEffect(() => {
     setDocs(null);
@@ -211,7 +215,12 @@ export default function Archive() {
           accessibilityLabel="Ta bort kurs"
           onPress={() =>
             confirm("Ta bort kurs?", `”${course.name}” och alla dess dokument tas bort permanent.`, async () => {
-              await api(`/courses/${course.id}`, { method: "DELETE" });
+              try {
+                await api(`/courses/${course.id}`, { method: "DELETE" });
+              } catch (e: any) {
+                if (e?.status !== 404) return setError(e.message);
+              }
+              setCourses((cs) => cs.filter((x) => x.id !== course.id));
               setSelected(null);
               loadCourses();
             })

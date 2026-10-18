@@ -1,0 +1,26 @@
+{
+  "summary": "Delete-flow bug (iteration 17) verified fixed. Tested on web preview (mobile 390x844 + desktop 1280x800) via Playwright with real login (test@copythat.app / 246810). All 5 critical scenarios passed: (1) delete doc from doc screen navigates back to /archive and the deleted document is removed from the list immediately without reload (useFocusEffect reload works); (2) rapid double-tap on doc-delete does NOT produce an uncaught 'Hittades inte' error — guarded by `deleting` state + 404 swallowed as success in deleteDoc; (3) deleting an already-deleted document (simulated via direct API DELETE before clicking the trash) is handled gracefully (404 treated as success, navigates back cleanly, no uncaught errors); (4) course delete via delete-course removes the course from the sidebar list immediately; (5) desktop wide layout (sidebar+doc list side-by-side) deletes doc and the list on the right updates without reload. Note: page-delete-N could not be functionally tested because pages require OCR which fails without AI keys (see test_credentials.md note); code for deletePage uses the same optimistic-UI + 404-swallow pattern and reviewed as correct.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/test_reports/iteration_17.json"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "deleteDoc in /app/frontend/app/doc/[id].tsx:126-147 correctly guards double-tap with `deleting` state, swallows 404 as success, sets mounted.current=false before navigating, falls back to router.replace('/archive') if canGoBack is false — all good.",
+    "archive.tsx uses useFocusEffect to reload courses + current course docs on return, so delete-elsewhere flows reflect immediately. selectedRef pattern avoids stale closure. Good.",
+    "deletePage in /app/frontend/app/doc/[id].tsx:161-171 does optimistic UI removal first, then DELETE, then load() — swallows 404. Correct pattern.",
+    "delete-course handler in archive.tsx:217-227 does optimistic state removal, swallows 404, then reloads. Correct.",
+    "Minor: deletePage calls load() after the DELETE which is redundant with the optimistic update when request succeeds (extra GET), but it is useful for correcting state if deletion partially failed. Acceptable."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (not retested)", "frontend": "100% (5/5 critical delete scenarios)"},
+  "seed_data_creation": "Created a few test courses (names prefixed with DT/ST/W + timestamp) and documents for the delete tests. Documents were deleted as part of the tests. Some empty test courses may remain in the user's archive (DT1792364013, DT1792364184).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Login: POST /api/auth/request-code {email:'test@copythat.app'} then /api/auth/verify {email, code:'246810'} → localStorage['copythat.token']=JSON.stringify(token). To test window.confirm flows, override `window.confirm = () => true;` BEFORE every delete action (reset after any navigation). doc-delete, delete-course, page-delete-N testIDs are stable. The archive uses useFocusEffect so no reload is needed after returning from a delete. deletePage was not UI-tested because pages require OCR which errors without AI keys.",
+  "rca_of_issue": "Original bug: 'Delete function is bad, you must restart the app to see that it is deleted' + iOS 'Uncaught (in promise) Error: Hittades inte' with double DELETE (200+404). Root causes addressed in code: (a) archive did not refresh on focus → fixed with useFocusEffect reloading courses+docs; (b) rapid double-tap sent two DELETE requests, the second returning 404 which bubbled up as uncaught rejection → fixed with `deleting` state guard on the button + explicit `if (e.status !== 404) throw/flash; else treat as success` in deleteDoc/deletePage/delete-course. All three delete flows now follow the same pattern. Verified via Playwright that: (i) no 'Hittades inte' errors occur on double-tap; (ii) stale-delete (doc already gone) exits cleanly to /archive; (iii) list refreshes without a manual reload."
+}
