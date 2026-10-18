@@ -5,7 +5,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
-import { File, Paths } from "expo-file-system";
+import { Directory, File, Paths } from "expo-file-system";
 import { Ionicons } from "@expo/vector-icons";
 import { exportUrl } from "@/src/api";
 import { colors, radius } from "@/src/theme";
@@ -25,6 +25,7 @@ export function WordPreview({ docId, title, onClose }: Props) {
   const [pdfUri, setPdfUri] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const frame = useRef<any>(null);
 
   useEffect(() => {
@@ -75,13 +76,36 @@ export function WordPreview({ docId, title, onClose }: Props) {
         a.click();
         if (href !== pdfUri) setTimeout(() => URL.revokeObjectURL(href), 5000);
       } else {
-        const uri = mode === "pdf" && pdfUri ? pdfUri : (await download(mode)).uri;
-        await Sharing.shareAsync(uri, { mimeType: MIME[mode].mime, UTI: MIME[mode].uti, dialogTitle: `Spara ${MIME[mode].label}-dokument` });
+        // iOS: let the user pick a folder in Files and write the file there (the share sheet's
+        // "Spara i Filer" is unreliable from Expo apps).
+        const src = mode === "pdf" && pdfUri ? new File(pdfUri) : await download(mode);
+        let dir: Directory;
+        try {
+          dir = await Directory.pickDirectoryAsync();
+        } catch {
+          return; // user cancelled
+        }
+        const name = fileName(title, mode);
+        const existing = new File(dir, name);
+        if (existing.exists) existing.delete();
+        const out = dir.createFile(name, MIME[mode].mime);
+        out.write(await src.bytes());
+        setNotice(`Sparad i Filer: ${name}`);
+        setTimeout(() => setNotice(null), 3000);
       }
     } catch (e: any) {
       Alert.alert("Kunde inte spara", e.message);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const share = async () => {
+    try {
+      const uri = mode === "pdf" && pdfUri ? pdfUri : (await download(mode)).uri;
+      await Sharing.shareAsync(uri, { mimeType: MIME[mode].mime, UTI: MIME[mode].uti, dialogTitle: `Dela ${MIME[mode].label}-dokument` });
+    } catch (e: any) {
+      Alert.alert("Kunde inte dela", e.message);
     }
   };
 
@@ -136,11 +160,17 @@ export function WordPreview({ docId, title, onClose }: Props) {
             <Pressable testID="word-preview-save" accessibilityLabel="Spara" disabled={!ready || busy} onPress={save} style={[styles.iconBtn, styles.iconPrimary, !ready && styles.dim]}>
               {busy ? <ActivityIndicator color={colors.primaryText} /> : <Ionicons name="download-outline" size={22} color={colors.primaryText} />}
             </Pressable>
+            {Platform.OS !== "web" && (
+              <Pressable testID="word-preview-share" accessibilityLabel="Dela" disabled={!ready} onPress={share} style={[styles.iconBtn, styles.iconSecondary, !ready && styles.dim]}>
+                <Ionicons name="share-outline" size={22} color={colors.text} />
+              </Pressable>
+            )}
             <Pressable testID="word-preview-print" accessibilityLabel="Skriv ut" disabled={!ready} onPress={print} style={[styles.iconBtn, styles.iconSecondary, !ready && styles.dim]}>
               <Ionicons name="print-outline" size={22} color={colors.text} />
             </Pressable>
           </View>
           <Text style={styles.title} numberOfLines={1}>{title}</Text>
+          {notice && <Text style={styles.notice}>{notice}</Text>}
           <View style={styles.body}>{error ? <Text style={styles.error}>{error}</Text> : preview}</View>
         </SafeAreaView>
   );
@@ -148,14 +178,14 @@ export function WordPreview({ docId, title, onClose }: Props) {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.surface },
-  bar: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 8, paddingTop: 8 },
+  bar: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 8, paddingTop: 8 },
   iconBtn: { width: 44, height: 44, borderRadius: radius.md, alignItems: "center", justifyContent: "center" },
   iconPrimary: { backgroundColor: colors.primary },
   iconSecondary: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   dim: { opacity: 0.4 },
   close: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   segment: { flexDirection: "row", backgroundColor: colors.bg, borderRadius: radius.md, padding: 3 },
-  segBtn: { paddingHorizontal: 14, minHeight: 36, justifyContent: "center", borderRadius: radius.sm },
+  segBtn: { paddingHorizontal: 12, minHeight: 36, justifyContent: "center", borderRadius: radius.sm },
   segOn: { backgroundColor: colors.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
   segText: { fontSize: 14, fontWeight: "600", color: colors.muted },
   segTextOn: { color: colors.text },
@@ -163,6 +193,7 @@ const styles = StyleSheet.create({
   body: { flex: 1, backgroundColor: colors.bg },
   web: { flex: 1, backgroundColor: "transparent" },
   center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
+  notice: { backgroundColor: colors.okSoft, color: colors.ok, paddingHorizontal: 16, paddingVertical: 8, fontSize: 14, fontWeight: "600" },
   wait: { color: colors.muted, fontSize: 15 },
   error: { color: colors.danger, padding: 24, textAlign: "center" },
 });

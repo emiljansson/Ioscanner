@@ -38,3 +38,4 @@ templates, settings{id:"global",speed_mode,primary_provider}, uploads.
 - Camera upload text: "Sparar bilden".
 - Preview has Word/PDF toggle; PDF via /export?format=pdf (PyMuPDF Story from Pandoc HTML, A4). Save/Print are icon-only buttons.
 - Preview moved from RN Modal to route app/preview/[id].tsx (iOS share sheet 'Spara i Filer' fails from inside a Modal). app.json infoPlist CFBundleDevelopmentRegion=sv so system dialogs are Swedish (build only, not Expo Go).
+- iOS Spara now uses Directory.pickDirectoryAsync (folder picker in Files) + write; separate Dela icon keeps the share sheet.
