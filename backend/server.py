@@ -558,7 +558,7 @@ def _snippet(text: str, q: str) -> str:
 async def export(doc_id: str, format: str = "docx", user: dict = Depends(current_user)):
     d = await own("documents", doc_id, user)
     try:
-        files = await build_files(d, html=format == "html")
+        files = await build_files(d, html=format == "html", pdf=format == "pdf")
     except Exception as e:
         log.exception("export failed")
         raise HTTPException(500, f"Exporten misslyckades: {e}")
@@ -568,6 +568,8 @@ async def export(doc_id: str, format: str = "docx", user: dict = Depends(current
         data, mime, ext = make_zip(files, base), "application/zip", "zip"
     elif format == "html":
         return Response(files["html"], media_type="text/html; charset=utf-8")
+    elif format == "pdf":
+        data, mime, ext = files["pdf"], "application/pdf", "pdf"
     elif format == "txt":
         data, mime, ext = files["txt"].encode(), "text/plain; charset=utf-8", "txt"
     else:

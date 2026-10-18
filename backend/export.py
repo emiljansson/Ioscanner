@@ -79,7 +79,7 @@ async def figure_labels(doc: dict) -> dict:
     return out
 
 
-async def build_files(doc: dict, html: bool = False) -> dict:
+async def build_files(doc: dict, html: bool = False, pdf: bool = False) -> dict:
     """Return {"docx": bytes, "txt": str, "images": {name: bytes}, "captions": str}.
 
     The ZIP gets EVERY extracted image (not only those referenced in the text)."""
@@ -119,9 +119,37 @@ async def build_files(doc: dict, html: bool = False) -> dict:
                 page = pypandoc.convert_file(str(src), "html5", format=PANDOC_FMT, extra_args=[
                     f"--resource-path={tmp}", "--standalone", "--embed-resources", "--mathml",
                     f"--include-in-header={t / 'style.html'}", f"--metadata=pagetitle:{doc.get('title') or 'Dokument'}"])
-            return out.read_bytes(), txt, page
-    docx, txt, page = await asyncio.to_thread(_convert)
-    return {"docx": docx, "txt": txt, "html": page, "images": images, "captions": "\n".join(caption_lines)}
+            pdf_bytes = _html_to_pdf(pypandoc.convert_file(str(src), "html5", format=PANDOC_FMT), tmp) if pdf else b""
+            return out.read_bytes(), txt, page, pdf_bytes
+    docx, txt, page, pdf_bytes = await asyncio.to_thread(_convert)
+    return {"docx": docx, "txt": txt, "html": page, "pdf": pdf_bytes, "images": images,
+            "captions": "\n".join(caption_lines)}
+
+
+PDF_CSS = """
+body { font-family: sans-serif; font-size: 11pt; line-height: 1.45; color: #111; }
+h1 { font-size: 20pt; } h2 { font-size: 16pt; } h3 { font-size: 13pt; }
+img { max-width: 100%; }
+table { border-collapse: collapse; } th, td { border: 1px solid #999; padding: 3px 6px; }
+"""
+
+
+def _html_to_pdf(body_html: str, resource_dir: str) -> bytes:
+    """Render HTML (with images/ relative paths) to an A4 PDF using PyMuPDF Story."""
+    import pymupdf as fitz
+    story = fitz.Story(html=body_html, user_css=PDF_CSS, archive=resource_dir)
+    buf = io.BytesIO()
+    writer = fitz.DocumentWriter(buf)
+    page_rect = fitz.paper_rect("a4")
+    where = page_rect + (56, 56, -56, -56)
+    more = True
+    while more:
+        dev = writer.begin_page(page_rect)
+        more, _ = story.place(where)
+        story.draw(dev)
+        writer.end_page()
+    writer.close()
+    return buf.getvalue()
 
 
 def safe_name(title: str) -> str:

@@ -93,7 +93,7 @@ export async function uploadFile(
   return done.pages_created;
 }
 
-export function exportUrl(docId: string, format: "docx" | "zip" | "txt" | "html") {
+export function exportUrl(docId: string, format: "docx" | "zip" | "txt" | "html" | "pdf") {
   return `${API_URL}/documents/${docId}/export?format=${format}&token=${encodeURIComponent(token ?? "")}`;
 }
 

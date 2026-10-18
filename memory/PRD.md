@@ -36,3 +36,4 @@ templates, settings{id:"global",speed_mode,primary_provider}, uploads.
 - Word button opens in-app preview (WordPreview.tsx: Pandoc HTML via /export?format=html) with Spara (web download / iOS share sheet) and Skriv ut (iframe print / expo-print). Modal wrapped in SafeAreaProvider for iOS notch.
 - "Skicka mejl": POST /documents/{id}/email uploads ZIP to CommHub storage (category documents) and emails a download link to the logged-in user (CommHub email has no attachments).
 - Camera upload text: "Sparar bilden".
+- Preview has Word/PDF toggle; PDF via /export?format=pdf (PyMuPDF Story from Pandoc HTML, A4). Save/Print are icon-only buttons.
