@@ -13,6 +13,17 @@ from core import db, fetch_bytes
 FIG_RE = re.compile(r"\[\[FIGURE:(\d+)\]\]")
 REF_RE = re.compile(r"!\[([^\]]*)\]\(fig:([a-f0-9]+)\)")
 PANDOC_FMT = "markdown+tex_math_dollars+pipe_tables"
+PREVIEW_CSS = """<style>
+html { background: #e9e9ee; }
+body { max-width: 760px; margin: 16px auto; padding: 48px 56px; background: #fff; color: #111;
+  font-family: Calibri, "Segoe UI", -apple-system, Helvetica, Arial, sans-serif; font-size: 16px; line-height: 1.5;
+  box-shadow: 0 1px 6px rgba(0,0,0,.15); box-sizing: border-box; }
+img { max-width: 100%; height: auto; }
+table { border-collapse: collapse; margin: 12px 0; }
+th, td { border: 1px solid #999; padding: 4px 8px; }
+@media (max-width: 700px) { body { margin: 0; padding: 20px 18px; box-shadow: none; } html { background: #fff; } }
+@media print { html { background: #fff; } body { box-shadow: none; margin: 0; padding: 0; max-width: none; } }
+</style>"""
 HTML_TAG_RE = re.compile(r"</?(div|span|br|p|hr|center|font)\b[^>]*>", re.I)
 
 
@@ -68,7 +79,7 @@ async def figure_labels(doc: dict) -> dict:
     return out
 
 
-async def build_files(doc: dict) -> dict:
+async def build_files(doc: dict, html: bool = False) -> dict:
     """Return {"docx": bytes, "txt": str, "images": {name: bytes}, "captions": str}.
 
     The ZIP gets EVERY extracted image (not only those referenced in the text)."""
@@ -102,9 +113,15 @@ async def build_files(doc: dict) -> dict:
             pypandoc.convert_file(str(src), "docx", format=PANDOC_FMT, outputfile=str(out),
                                   extra_args=[f"--resource-path={tmp}"])
             txt = pypandoc.convert_file(str(src), "plain", format=PANDOC_FMT, extra_args=["--wrap=none"])
-            return out.read_bytes(), txt
-    docx, txt = await asyncio.to_thread(_convert)
-    return {"docx": docx, "txt": txt, "images": images, "captions": "\n".join(caption_lines)}
+            page = ""
+            if html:
+                (t / "style.html").write_text(PREVIEW_CSS, encoding="utf-8")
+                page = pypandoc.convert_file(str(src), "html5", format=PANDOC_FMT, extra_args=[
+                    f"--resource-path={tmp}", "--standalone", "--embed-resources", "--mathml",
+                    f"--include-in-header={t / 'style.html'}", f"--metadata=pagetitle:{doc.get('title') or 'Dokument'}"])
+            return out.read_bytes(), txt, page
+    docx, txt, page = await asyncio.to_thread(_convert)
+    return {"docx": docx, "txt": txt, "html": page, "images": images, "captions": "\n".join(caption_lines)}
 
 
 def safe_name(title: str) -> str:

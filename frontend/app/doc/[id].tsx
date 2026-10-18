@@ -12,6 +12,7 @@ import { PageCard } from "@/src/components/PageCard";
 import { AiPanel } from "@/src/components/AiPanel";
 import { MarkdownView } from "@/src/components/MarkdownView";
 import { ScanModal } from "@/src/components/ScanModal";
+import { WordPreview } from "@/src/components/WordPreview";
 import { FiguresPanel, collectFigures } from "@/src/components/FiguresPanel";
 import { pickFiles, useDropzone } from "@/src/files";
 import { colors, radius } from "@/src/theme";
@@ -34,6 +35,7 @@ export default function DocScreen() {
   const [notice, setNotice] = useState<string | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
   const [figsOpen, setFigsOpen] = useState(false);
+  const [wordOpen, setWordOpen] = useState(false);
   const mounted = useRef(true);
 
   const load = useCallback(async () => {
@@ -103,10 +105,23 @@ export default function DocScreen() {
     flash("All text är kopierad");
   };
 
-  const download = (fmt: "docx" | "zip") => {
+  const download = (fmt: "zip") => {
     const url = exportUrl(id!, fmt);
     if (Platform.OS === "web") window.open(url, "_blank");
     else Linking.openURL(url);
+  };
+
+  const [mailing, setMailing] = useState(false);
+  const emailZip = async () => {
+    setMailing(true);
+    try {
+      const r = await api<{ email: string }>(`/documents/${id}/email`, { method: "POST" });
+      flash(`ZIP-filen är skickad till ${r.email}`);
+    } catch (e: any) {
+      flash(e.message);
+    } finally {
+      setMailing(false);
+    }
   };
 
   const deleteDoc = () => {
@@ -180,8 +195,9 @@ export default function DocScreen() {
         {!isGen && Platform.OS !== "web" && <Button small icon="camera-outline" label="Kamera" onPress={() => router.push(`/capture?doc=${doc.id}`)} />}
         {!isGen && Platform.OS === "web" && <Button testID="scan-btn" small icon="print-outline" label="Scanna" onPress={() => setScanOpen(true)} />}
         <Button testID="ai-open" small icon="sparkles-outline" label="Bearbeta med AI" onPress={() => setAiOpen((o) => !o)} />
-        <Button testID="download-docx" small icon="document-outline" label="Word" onPress={() => download("docx")} />
+        <Button testID="download-docx" small icon="document-outline" label="Word" onPress={() => setWordOpen(true)} />
         <Button testID="download-zip" small icon="archive-outline" label="ZIP" onPress={() => download("zip")} />
+        <Button testID="email-zip" small icon="mail-outline" label="Skicka mejl" loading={mailing} onPress={emailZip} />
         <Button testID="figures-open" small icon="images-outline" label={`Bilder (${collectFigures(doc).filter((f) => !f.deleted).length})`} onPress={() => setFigsOpen(true)} />
         <Button testID="copy-all" small icon="copy-outline" label="Kopiera text" onPress={copyAll} />
         {!isGen && pages.length > 1 && <Button small icon="swap-vertical" label="Sortera efter sidnummer" onPress={async () => setDoc(await api<Doc>(`/documents/${id}/sort`, { method: "POST" }))} />}
@@ -261,6 +277,7 @@ export default function DocScreen() {
         </Modal>
       )}
       {figsOpen && <FiguresPanel doc={doc} onClose={() => setFigsOpen(false)} onPageChanged={updatePage} onDownloadZip={() => download("zip")} />}
+      {wordOpen && <WordPreview docId={doc.id} title={title || doc.title} onClose={() => setWordOpen(false)} />}
       {scanOpen && (
         <ScanModal
           visible

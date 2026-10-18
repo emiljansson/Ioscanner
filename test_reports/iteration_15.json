@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 15 verifies the new in-app Word preview and 'Skicka mejl' flow end-to-end (backend + frontend web). Backend: all 9 pytest tests pass (6 in /app/backend/tests/test_word_export.py + 3 new in /app/backend/tests/test_email_zip.py). GET /api/documents/{id}/export?format=html returns 200 text/html (~4.3 KB standalone Pandoc HTML with <style> embedded, Content-Disposition is NOT 'attachment'); works with both Authorization header and ?token=... query. docx + zip exports still work (PK header, correct content-types). POST /api/documents/{id}/email returns {ok:true,email:'test@copythat.app'} (real CommHub send succeeded in this env), requires auth (401), 404 on unknown doc. Frontend web (390x844, logged in as test@copythat.app via /api/auth/verify + token injected into localStorage['copythat.token']): on /doc/{id} the toolbar shows the three testIDs download-docx / download-zip / email-zip. Tapping 'Word' (download-docx) opens the fullscreen WordPreview modal INSIDE THE APP with ZERO new tabs opened (context.pages count 1→1); the top bar renders the close X (word-preview-close), 'Spara' (word-preview-save, primary), 'Skriv ut' (word-preview-print), followed by the <iframe data-testid='word-preview-frame'> that renders the Pandoc HTML. 'Spara' triggers a browser download event with suggested filename 'TEST_wp_ui_doc.docx' and no new tab. 'Skriv ut' calls iframe.contentWindow.print() (verified by stubbing print on the iframe window — window.__printCalled became true, no crash). Close X dismisses the modal (iframe removed from DOM). 'Skicka mejl' (email-zip) → the green notice 'ZIP-filen är skickad till test@copythat.app' appears within a few seconds. No red-screen, no PAGEERROR, no uncaught exceptions. The only console errors observed are the pre-auth 401 on /api/me which is expected. Code review: WordPreview.tsx is clean (112 lines), uses Platform.OS branch so web path does blob + <a> click download and native path uses expo-file-system + expo-sharing; iframe is rendered via React.createElement to inject srcDoc + data-testid; the Modal uses presentationStyle='fullScreen' with SafeAreaView — the user never leaves the app. server.py /export properly branches on format=='html' and returns Response(media_type='text/html; charset=utf-8') with no Content-Disposition. /email uses commhub_upload + commhub_send_email and persists the stored id as email_zip_id so the previous blob can be commhub_delete'd on next send/doc deletion. No deprecated expo-av/expo-barcode-scanner/expo-background-fetch usage detected in WordPreview.tsx or doc/[id].tsx (expo-print, expo-sharing, expo-file-system/File+Paths, react-native-webview — all current).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_word_export.py",
+    "/app/backend/tests/test_email_zip.py",
+    "/app/test_reports/pytest/pytest_results_iter15.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "WordPreview.tsx:94 — iframe rendered via React.createElement so srcDoc and data-testid work; style={border:0, width:'100%', height:'100%'} fills the body. Correct and testable.",
+    "WordPreview.tsx:65 — on web print() is called directly on the iframe contentWindow (no window.open), which is exactly what 'inline, never leave the app' requires. Verified via stub (__printCalled=true).",
+    "WordPreview.tsx:37-53 — web save path uses fetch→blob→<a download> with URL.revokeObjectURL cleanup after 5s; native path uses expo-file-system File + expo-sharing (shareAsync with the correct DOCX mime + UTI). No new tab on either path.",
+    "server.py:569-570 — html branch returns Response(files['html'], media_type='text/html; charset=utf-8') with NO attachment Content-Disposition, so the iframe renders inline. Correct.",
+    "server.py:579-607 — /email uploads the ZIP to CommHub storage (commhub_upload), deletes the previous email_zip_id, stores the new one on the doc, and sends an HTML email with a 'Ladda ner ZIP' button + plaintext fallback. Catches RuntimeError from commhub_send_email and raises 503 'Mejlet kunde inte skickas just nu'. Clean.",
+    "api.ts:96-97 — exportUrl appends ?token=... URL-encoded, which is what the iframe/img needs since fetch() for the preview and <a href=> for the direct download don't carry the Authorization header. Correct.",
+    "Minor: WordPreview.tsx stays small (112 lines) and does not duplicate exportUrl logic — good DRY."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_email_zip.py (new — 3 tests for POST /documents/{id}/email)"
+  ],
+  "success_rate": {"backend": "100% (9/9 pytest tests pass across test_word_export.py + test_email_zip.py)", "frontend": "100% (all 8 UI assertions in the playbook pass on web 390x844)"},
+  "seed_data_creation": "Each test transaction creates its own TEST_ course + document via /api/courses and /api/documents and deletes them in teardown. The playwright UI run also cleans up its TEST_wp_ui / TEST_wp_ui_doc via DELETE at the end.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Login: test@copythat.app / 246810. The in-app Word preview and 'Skicka mejl' are both fully working on web. Native iOS behaviour (expo-print.printAsync for Skriv ut, expo-sharing.shareAsync for Spara, react-native-webview for the preview) cannot be exercised on web — only the real device/simulator can verify those. If re-testing from scratch: use the pattern in this iteration — call POST /api/auth/verify with the test code, set localStorage['copythat.token']=JSON.stringify(token), navigate directly to /doc/{created_doc_id} and interact with testIDs download-docx, word-preview-close/save/print, word-preview-frame, email-zip."
+}

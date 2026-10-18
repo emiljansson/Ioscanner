@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
 
 from core import (db, new_id, now, log, current_user, require_owner, make_token, get_ai_keys,
-                  commhub_request_otp, commhub_verify_otp, commhub_delete, OWNER_EMAIL,
+                  commhub_request_otp, commhub_verify_otp, commhub_delete, commhub_upload, commhub_send_email, OWNER_EMAIL,
                   TEST_LOGIN_EMAIL, TEST_LOGIN_CODE)
 from ai import MODELS, LABELS, run_instruction, AIError
 import pipeline
@@ -176,6 +176,8 @@ async def delete_document_data(doc_id: str) -> None:
         await commhub_delete(p.get("image_file_id"))
         for f in p.get("figures", []):
             await commhub_delete(f.get("file_id"))
+    d = await db.documents.find_one({"id": doc_id}, {"_id": 0, "email_zip_id": 1})
+    await commhub_delete((d or {}).get("email_zip_id"))
     await db.pages.delete_many({"document_id": doc_id})
     await db.documents.delete_one({"id": doc_id})
 
@@ -556,7 +558,7 @@ def _snippet(text: str, q: str) -> str:
 async def export(doc_id: str, format: str = "docx", user: dict = Depends(current_user)):
     d = await own("documents", doc_id, user)
     try:
-        files = await build_files(d)
+        files = await build_files(d, html=format == "html")
     except Exception as e:
         log.exception("export failed")
         raise HTTPException(500, f"Exporten misslyckades: {e}")
@@ -564,12 +566,45 @@ async def export(doc_id: str, format: str = "docx", user: dict = Depends(current
     from urllib.parse import quote
     if format == "zip":
         data, mime, ext = make_zip(files, base), "application/zip", "zip"
+    elif format == "html":
+        return Response(files["html"], media_type="text/html; charset=utf-8")
     elif format == "txt":
         data, mime, ext = files["txt"].encode(), "text/plain; charset=utf-8", "txt"
     else:
         data, mime, ext = files["docx"], "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"
     return Response(data, media_type=mime, headers={
         "Content-Disposition": f"attachment; filename*=UTF-8''{quote(base)}.{ext}"})
+
+
+@api.post("/documents/{doc_id}/email")
+async def email_zip(doc_id: str, user: dict = Depends(current_user)):
+    """Upload the ZIP to CommHub storage and email a download link to the logged-in user."""
+    d = await own("documents", doc_id, user)
+    try:
+        files = await build_files(d)
+        base = safe_name(d["title"])
+        stored = await commhub_upload(make_zip(files, base), f"{base}.zip", "application/zip", "documents")
+    except Exception as e:
+        log.exception("email zip failed")
+        raise HTTPException(500, f"ZIP-filen kunde inte skapas: {e}")
+    await commhub_delete(d.get("email_zip_id"))
+    await db.documents.update_one({"id": doc_id}, {"$set": {"email_zip_id": stored["id"]}})
+    from html import escape
+    t, url, n = escape(d["title"]), stored["url"], len(files["images"])
+    html = (
+        '<table role="presentation" width="100%"><tr><td style="padding:24px;font-family:Arial,sans-serif;color:#1F2328">'
+        f'<p style="font-size:16px">Här är ditt inskannade dokument <b>{t}</b> från CopyThat.</p>'
+        f'<p style="font-size:14px;color:#6B6F76">ZIP-filen innehåller Word-dokumentet, texten (.txt) och {n} bilder.</p>'
+        f'<p><a href="{url}" style="display:inline-block;background:#2F6FEB;color:#fff;padding:12px 20px;'
+        'border-radius:8px;text-decoration:none;font-weight:bold">Ladda ner ZIP</a></p>'
+        f'<p style="font-size:12px;color:#6B6F76">Fungerar inte knappen? Kopiera länken: {url}</p></td></tr></table>'
+    )
+    try:
+        await commhub_send_email(user["email"], f"CopyThat: {d['title']}", html,
+                                 f"Ditt dokument {d['title']} från CopyThat. Ladda ner ZIP: {url}")
+    except RuntimeError:
+        raise HTTPException(503, "Mejlet kunde inte skickas just nu. Försök igen om en stund.")
+    return {"ok": True, "email": user["email"]}
 
 
 @api.get("/documents/{doc_id}/markdown")

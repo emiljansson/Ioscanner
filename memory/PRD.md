@@ -31,3 +31,8 @@ templates, settings{id:"global",speed_mode,primary_provider}, uploads.
 - DONE: AI keys from CommHub keychain (openai-family, gemini). Anthropic key missing in keychain. Models: gemini fast 3.8-flash / pro 3.1-pro-preview, openai 5.4-mini / 5.5.
 - Before publish: remove TEST_LOGIN_EMAIL/CODE from backend/.env. New iOS build needed (app now server-based).
 - Old standalone app code archived in /app/_archive/frontend_local_v1.
+
+## Update (June 2026)
+- Word button opens in-app preview (WordPreview.tsx: Pandoc HTML via /export?format=html) with Spara (web download / iOS share sheet) and Skriv ut (iframe print / expo-print). Modal wrapped in SafeAreaProvider for iOS notch.
+- "Skicka mejl": POST /documents/{id}/email uploads ZIP to CommHub storage (category documents) and emails a download link to the logged-in user (CommHub email has no attachments).
+- Camera upload text: "Sparar bilden".

@@ -70,23 +70,28 @@ async def commhub_request_otp(email: str) -> None:
         'Om du inte försökte logga in kan du ignorera det här mejlet.</p></td></tr></table>'
     )
     try:
-        async with httpx.AsyncClient(timeout=30) as c:
-            r = await c.post(
-                f"{COMMHUB_BASE}/email/send",
-                headers={"X-API-Key": COMMHUB_API_KEY},
-                json={"app_id": COMMHUB_APP_ID, "to": [email], "subject": f"Din kod till CopyThat: {code}",
-                      "html_content": html, "text_content": f"Din inloggningskod till CopyThat: {code} (gäller i 10 minuter)",
-                      "from_name": "CopyThat"},
-            )
-    except httpx.HTTPError as e:
-        log.error("CommHub email/send network error: %s", e)
-        raise HTTPException(503, "Det gick inte att skicka koden just nu. Försök igen om en stund.")
-    if r.status_code >= 400:
-        log.error("CommHub email/send %s: %s", r.status_code, r.text[:300])
+        await commhub_send_email(email, f"Din kod till CopyThat: {code}", html,
+                                 f"Din inloggningskod till CopyThat: {code} (gäller i 10 minuter)")
+    except RuntimeError:
         raise HTTPException(503, "Det gick inte att skicka koden just nu. Försök igen om en stund.")
     await db.login_codes.delete_many({"email": email})
     await db.login_codes.insert_one({"email": email, "hash": _hash_code(email, code), "created": time.time(),
                                      "attempts": 0})
+
+
+async def commhub_send_email(to: str, subject: str, html: str, text: str) -> None:
+    """Send an email via CommHub. Raises RuntimeError on failure."""
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.post(f"{COMMHUB_BASE}/email/send", headers={"X-API-Key": COMMHUB_API_KEY},
+                             json={"app_id": COMMHUB_APP_ID, "to": [to], "subject": subject, "html_content": html,
+                                   "text_content": text, "from_name": "CopyThat"})
+    except httpx.HTTPError as e:
+        log.error("CommHub email/send network error: %s", e)
+        raise RuntimeError("network")
+    if r.status_code >= 400:
+        log.error("CommHub email/send %s: %s", r.status_code, r.text[:300])
+        raise RuntimeError(str(r.status_code))
 
 
 async def commhub_verify_otp(email: str, code: str) -> bool:
