@@ -31,6 +31,7 @@ function Gate() {
       <Stack.Screen name="login" />
       <Stack.Screen name="archive" />
       <Stack.Screen name="doc/[id]" />
+      <Stack.Screen name="preview/[id]" />
       <Stack.Screen name="settings" />
       <Stack.Screen name="capture" options={{ presentation: "fullScreenModal" }} />
     </Stack>

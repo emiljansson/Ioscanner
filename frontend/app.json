@@ -15,7 +15,12 @@
       "infoPlist": {
         "NSCameraUsageDescription": "Scan documents to extract text via AI",
         "NSPhotoLibraryUsageDescription": "Import existing photos to scan text",
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "CFBundleDevelopmentRegion": "sv",
+        "CFBundleLocalizations": [
+          "sv"
+        ],
+        "CFBundleAllowMixedLocalizations": true
       }
     },
     "android": {

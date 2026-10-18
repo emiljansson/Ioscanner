@@ -1,7 +1,7 @@
-// In-app preview of the Word / PDF export with Save and Print — the user never leaves the app.
+// In-app preview screen content of the Word / PDF export with Save and Print — the user never leaves the app.
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native";
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
@@ -120,8 +120,6 @@ export function WordPreview({ docId, title, onClose }: Props) {
   );
 
   return (
-    <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
-      <SafeAreaProvider>
         <SafeAreaView style={styles.safe} edges={["top", "bottom", "left", "right"]}>
           <View style={styles.bar}>
             <Pressable onPress={onClose} style={styles.close} accessibilityLabel="Stäng" testID="word-preview-close">
@@ -145,8 +143,6 @@ export function WordPreview({ docId, title, onClose }: Props) {
           <Text style={styles.title} numberOfLines={1}>{title}</Text>
           <View style={styles.body}>{error ? <Text style={styles.error}>{error}</Text> : preview}</View>
         </SafeAreaView>
-      </SafeAreaProvider>
-    </Modal>
   );
 }
 
