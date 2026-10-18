@@ -3,22 +3,26 @@ import React from "react";
 import { Image, StyleSheet, Text, View } from "react-native";
 import { colors } from "@/src/theme";
 
-type Props = { markdown: string; figures?: Record<string, { url: string; caption: string }> };
+type FigMap = Record<string, { url: string; caption: string }>;
+type Props = { markdown: string; figures?: FigMap };
+const FigCtx = React.createContext<FigMap>({});
 
 function Inline({ text, style }: { text: string; style?: any }) {
-  // **bold** and $math$
-  const parts = text.split(/(\*\*[^*]+\*\*|\$[^$]+\$)/g).filter(Boolean);
+  // **bold**, $math$ and inline pictograms ([[FIGURE:n]] / ![cap](fig:ID))
+  const figs = React.useContext(FigCtx);
+  const parts = text.split(/(\*\*[^*]+\*\*|\$[^$]+\$|\[\[FIGURE:\d+\]\]|!\[[^\]]*\]\(fig:[a-f0-9]+\))/g).filter(Boolean);
   return (
     <Text style={style}>
-      {parts.map((p, i) =>
-        p.startsWith("**") ? (
-          <Text key={i} style={styles.bold}>{p.slice(2, -2)}</Text>
-        ) : p.startsWith("$") ? (
-          <Text key={i} style={styles.math}>{p.slice(1, -1)}</Text>
-        ) : (
-          <Text key={i}>{p}</Text>
-        )
-      )}
+      {parts.map((p, i) => {
+        if (p.startsWith("**")) return <Text key={i} style={styles.bold}>{p.slice(2, -2)}</Text>;
+        if (p.startsWith("$")) return <Text key={i} style={styles.math}>{p.slice(1, -1)}</Text>;
+        const m = p.match(/^\[\[FIGURE:(\d+)\]\]$/) || p.match(/^!\[[^\]]*\]\(fig:([a-f0-9]+)\)$/);
+        if (m) {
+          const f = figs[`n${m[1]}`] ?? figs[m[1]];
+          return f ? <Image key={i} source={{ uri: f.url }} style={styles.pictogram} resizeMode="contain" /> : null;
+        }
+        return <Text key={i}>{p}</Text>;
+      })}
     </Text>
   );
 }
@@ -26,6 +30,7 @@ function Inline({ text, style }: { text: string; style?: any }) {
 export function MarkdownView({ markdown, figures = {} }: Props) {
   const blocks = (markdown || "").replace(/<\/?(div|span|br|p|hr|center|font)\b[^>]*>/gi, "").split(/\n{2,}/);
   return (
+    <FigCtx.Provider value={figures}>
     <View style={styles.wrap}>
       {blocks.map((block, bi) => {
         const b = block.trim();
@@ -80,11 +85,13 @@ export function MarkdownView({ markdown, figures = {} }: Props) {
         return <Inline key={bi} text={b.replace(/\n/g, " ")} style={styles.p} />;
       })}
     </View>
+    </FigCtx.Provider>
   );
 }
 
 const styles = StyleSheet.create({
   wrap: { gap: 12 },
+  pictogram: { width: 40, height: 40 },
   p: { fontSize: 16, lineHeight: 25, color: colors.text, flexShrink: 1 },
   bold: { fontWeight: "700" },
   math: { fontFamily: "monospace", color: colors.primary },

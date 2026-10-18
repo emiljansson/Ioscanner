@@ -35,14 +35,15 @@ MARKDOWN RULES:
 - Math: inline LaTeX in $...$, display formulas in $$...$$ on their own lines. Chemical formulas also as LaTeX (e.g. $\\mathrm{H_2O}$).
 - Tables: GitHub pipe tables with a header row.
 - OMIT running headers, footers and page numbers.
-- Photos, illustrations, diagrams, charts, maps, product images and logos/emblems: put the placeholder [[FIGURE:id]] on its own line where the image appears, and add it to "figures" with box_2d normalized 0-1000 as [ymin, xmin, ymax, xmax] tightly covering the whole image (excluding the caption). Do not transcribe text inside images. The caption (e.g. "Figur 3.2 ...") goes ONLY in "caption", not in markdown. Do not mark decorative lines, background colors or plain text boxes.
+- Visual objects (photos, illustrations, pictograms/symbols next to words = bildstöd, icons, animal drawings, diagrams, charts, maps, logos/badges): EACH separate object gets its own placeholder [[FIGURE:id]] placed exactly where it belongs – on its own line for large images, or directly after the word it supports for small pictograms – and its own entry in "figures" with box_2d normalized 0-1000 as [ymin, xmin, ymax, xmax] tightly covering that one object (excluding the caption). A logo/badge with the coloured shape it sits on and the words inside that shape is ONE object; visually separate objects (even small or close together) are ALWAYS separate. If the page is a photo of a product/package, box the printed graphic objects, never the whole product or photo. Never nest boxes. Do not transcribe text inside images. The caption (e.g. "Figur 3.2 ...") goes ONLY in "caption", not in markdown. Do not mark decorative lines, background colors or plain text boxes.
 - Handwritten notes in the margin: add as a blockquote "> Anteckning: ...".
 - NEVER invent text. Keep the original language verbatim."""
 
 VERIFY_PROMPT = "Read the image and return ONLY the verbatim text content as plain text. No commentary, no markdown, no JSON."
 
 INSTRUCTION_SYSTEM = """You are a helpful study assistant. You receive study material (Markdown, may contain LaTeX math in $...$ and $$...$$, pipe tables and image references like ![caption](fig:ID)) and an instruction from the student.
-Follow the instruction and answer in Markdown. Keep math as LaTeX in $...$ / $$...$$, tables as pipe tables. You may reuse relevant image references exactly as given (![caption](fig:ID)); never invent new ones.
+Follow the instruction and answer in Markdown. Keep math as LaTeX in $...$ / $$...$$, tables as pipe tables.
+PICTURE SUPPORT (bildstöd) IS ESSENTIAL: the images belong to the material. Whenever your result uses or mentions content that has an image reference, include that exact image reference (![caption](fig:ID)) next to the corresponding text – small pictograms directly after the word they support, larger images on their own line. Keep every image unless the instruction explicitly says to remove images. Never invent new image references.
 Answer in the language of the material unless the instruction says otherwise. Return ONLY the resulting document: no preamble, no title describing the task, no closing remarks, and NEVER any HTML tags (no <div>, <br>, page-break markup) – pure Markdown only."""
 
 
@@ -289,15 +290,20 @@ async def read_page(image_jpeg: bytes, settings: dict, prev_markdown: str | None
     }
 
 
-# ---------------- Free instructions ----------------
-FIGURE_PROMPT = """Find every image region on this page: photos, illustrations, drawings, diagrams, charts, maps, product images, logos and emblems.
-Ignore plain text, tables made only of text, decorative lines and background colors.
-Return STRICT JSON: {"figures": [{"box_2d": [ymin, xmin, ymax, xmax], "caption": "<caption text near the image or a short Swedish description>"}]}
-box_2d is normalized 0-1000 and must tightly cover the whole image. Return {"figures": []} if there are none."""
+# ---------------- Object cutting (bildstöd) ----------------
+FIGURE_PROMPT = """You are cutting out images from a scanned school/study page so they can be reused as picture support (bildstöd) when the material is rewritten.
+Identify EVERY visual object on the page and return each one as a SEPARATE object: photos, illustrations, drawings, pictograms/symbols next to words (bildstöd), icons, mascots/animal drawings, diagrams, charts, maps, logos/badges.
+Rules:
+- One object = one box. Visually separate objects ALWAYS get separate boxes, even if they are close together or small (a row of pictograms = one box per pictogram).
+- A logo/badge together with the coloured shape it sits on and the words printed inside that shape is ONE object.
+- Do not box plain text, text-only tables, decorative lines or background colour. If the page is a photo of a product/package, box the printed graphic objects, never the whole product or photo.
+- Never return a box inside another box, and never a box covering most of the page.
+Return STRICT JSON: {"figures": [{"box_2d": [ymin, xmin, ymax, xmax], "caption": "<caption text near the object, or a short Swedish description of what it shows>", "near_text": "<the exact word or first words of the text line this object belongs to / stands next to, or empty>"}]}
+box_2d is normalized 0-1000 and must tightly cover the whole object. Return {"figures": []} if there are none."""
 
 
 async def detect_figures(image_jpeg: bytes, settings: dict) -> list[dict]:
-    """Dedicated image-finding pass (Gemini preferred – best at spatial boxes)."""
+    """Dedicated object-cutting pass (Gemini preferred – best at spatial boxes)."""
     keys = await get_ai_keys()
     provider = "gemini" if keys.get("gemini") else pick_primary(settings, keys)
     raw = await call_ai(provider, MODELS[provider]["fast"], FIGURE_PROMPT, image_jpeg, TIMEOUTS["fast"], want_json=True)
@@ -306,11 +312,43 @@ async def detect_figures(image_jpeg: bytes, settings: dict) -> list[dict]:
         box = f.get("box_2d")
         if isinstance(box, list) and len(box) == 4:
             try:
-                out.append({"n": i, "box_2d": [float(v) for v in box], "caption": str(f.get("caption") or "")[:300]})
+                out.append({"n": i, "box_2d": [float(v) for v in box], "caption": str(f.get("caption") or "")[:300],
+                            "near_text": str(f.get("near_text") or "")[:120]})
             except (TypeError, ValueError):
                 continue
     return out
 
+
+def _iou(a: list[float], b: list[float]) -> float:
+    ix = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    iy = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    inter = ix * iy
+    ua = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / ua if ua > 0 else 0.0
+
+
+def merge_figures(md: str, ocr_figs: list[dict], det_figs: list[dict]) -> tuple[str, list[dict]]:
+    """Keep the reading pass' figures (already placed in the text) and add every extra object the
+    dedicated pass found, placing its placeholder after the line containing its near_text."""
+    figs = list(ocr_figs)
+    n = max([f["n"] for f in figs] + [0])
+    lines = md.split("\n")
+    tail = []
+    for d in det_figs:
+        if any(_iou(d["box_2d"], f["box_2d"]) > 0.3 for f in figs):
+            continue
+        n += 1
+        figs.append({**d, "n": n})
+        anchor = (d.get("near_text") or "").strip().lower()[:40]
+        idx = next((i for i, ln in enumerate(lines) if anchor and anchor in ln.lower()), None)
+        if idx is None:
+            tail.append(f"[[FIGURE:{n}]]")
+        else:
+            lines[idx] = lines[idx] + f" [[FIGURE:{n}]]"
+    md = "\n".join(lines)
+    if tail:
+        md = md.rstrip() + "\n\n" + "\n\n".join(tail)
+    return md, figs
 
 # ---------------- Free instructions ----------------
 CHUNK_CHARS = 150_000

@@ -9,7 +9,7 @@ from PIL import Image, ImageOps
 from pillow_heif import register_heif_opener
 
 from core import db, new_id, now, commhub_upload, fetch_bytes, log
-from ai import read_page, detect_figures, AIError
+from ai import read_page, detect_figures, merge_figures, AIError
 
 register_heif_opener()
 
@@ -90,7 +90,7 @@ def _crop_box(w: int, h: int, box: list[float]) -> tuple[int, int, int, int] | N
     pad = 8  # ~0.8% padding
     x0, y0 = int(max(0, xmin - pad) / 1000 * w), int(max(0, ymin - pad) / 1000 * h)
     x1, y1 = int(min(1000, xmax + pad) / 1000 * w), int(min(1000, ymax + pad) / 1000 * h)
-    if (x1 - x0) * (y1 - y0) < 0.005 * w * h:
+    if (x1 - x0) * (y1 - y0) < 0.0005 * w * h:  # keep small pictograms (bildstöd)
         return None
     return x0, y0, x1, y1
 
@@ -110,6 +110,78 @@ async def crop_and_store(full: bytes, page_id: str, box: list[float]) -> dict | 
     fid = new_id()
     stored = await commhub_upload(data, f"{page_id}_{fid}.jpg", "image/jpeg", "images")
     return {"id": fid, "url": stored["url"], "file_id": stored["id"]}
+
+
+def grow_box(im: Image.Image, box: list[float]) -> list[float]:
+    """Expand a 0-1000 box ONLY across a clearly coloured panel the box sits on (e.g. a logo on a red
+    panel -> the whole red panel). Neutral colours (white/cream/grey/black) never grow, so photos of
+    objects in a room are not swallowed. Final box is capped at 70 % of the page per axis."""
+    W = 500
+    scale = W / im.width
+    small = im.convert("RGB").resize((W, max(1, int(im.height * scale))))
+    w, h = small.size
+    px = small.load()
+    y0, x0 = int(box[0] / 1000 * h), int(box[1] / 1000 * w)
+    y1, x1 = min(h - 1, int(box[2] / 1000 * h)), min(w - 1, int(box[3] / 1000 * w))
+    if y1 <= y0 or x1 <= x0:
+        return box
+    edge = [px[x, y] for x in range(x0, x1 + 1) for y in (y0, y1)] + [px[x, y] for y in range(y0, y1 + 1) for x in (x0, x1)]
+    panel = tuple(sorted(c[i] for c in edge)[len(edge) // 2] for i in range(3))
+    if max(panel) - min(panel) < 60:  # neutral colour -> no panel to grow into
+        return box
+
+    def match(x, y):
+        r, g, b = px[x, y]
+        return abs(r - panel[0]) + abs(g - panel[1]) + abs(b - panel[2]) < 90
+
+    def share(xs, ys):
+        n = len(xs) * len(ys)
+        return sum(1 for x in xs for y in ys if match(x, y)) / n if n else 0
+
+    limit = 0.5
+    for _ in range(max(w, h)):
+        grew = False
+        if y0 > 0 and (y1 - y0) < 0.7 * h and share(range(x0, x1 + 1), [y0 - 1]) >= limit:
+            y0 -= 1; grew = True  # noqa: E702
+        if y1 < h - 1 and (y1 - y0) < 0.7 * h and share(range(x0, x1 + 1), [y1 + 1]) >= limit:
+            y1 += 1; grew = True  # noqa: E702
+        if x0 > 0 and (x1 - x0) < 0.7 * w and share([x0 - 1], range(y0, y1 + 1)) >= limit:
+            x0 -= 1; grew = True  # noqa: E702
+        if x1 < w - 1 and (x1 - x0) < 0.7 * w and share([x1 + 1], range(y0, y1 + 1)) >= limit:
+            x1 += 1; grew = True  # noqa: E702
+        if not grew:
+            break
+    return [y0 / h * 1000, x0 / w * 1000, (y1 + 1) / h * 1000, (x1 + 1) / w * 1000]
+
+
+def drop_whole_page(figs: list[dict]) -> list[dict]:
+    """A box covering most of the page is the page/photo itself, not a figure on it."""
+    return [f for f in figs if (f["box_2d"][2] - f["box_2d"][0]) * (f["box_2d"][3] - f["box_2d"][1]) < 0.6 * 1_000_000]
+
+
+def dedupe_boxes(figs: list[dict]) -> list[dict]:
+    """Drop boxes that lie (mostly) inside a bigger one – parts of the same image."""
+    def area(b):
+        return max(0, b[2] - b[0]) * max(0, b[3] - b[1])
+
+    def inter(a, b):
+        return area([max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3])])
+    figs = sorted(figs, key=lambda f: -area(f["box_2d"]))
+    kept: list[dict] = []
+    for f in figs:
+        a = area(f["box_2d"]) or 1
+        if all(inter(f["box_2d"], k["box_2d"]) / a < 0.6 for k in kept):
+            kept.append(f)
+    return kept
+
+
+async def refine_figures(full: bytes, figs: list[dict]) -> list[dict]:
+    def _do():
+        with Image.open(io.BytesIO(full)) as im:
+            for f in figs:
+                f["box_2d"] = grow_box(im, f["box_2d"])
+        return dedupe_boxes(drop_whole_page(figs))
+    return await asyncio.to_thread(_do)
 
 
 async def settings_doc() -> dict:
@@ -134,15 +206,15 @@ async def process_page(page_id: str, rescan: bool = False) -> None:
                                   attempts=attempts, prev_conf=page.get("confidence") or 0)
             found = res.pop("figures")
             md = res.pop("markdown")
-            if not found:
-                # The reading pass found no images – run a dedicated image-finding pass.
-                try:
-                    found = await detect_figures(ai_jpg, settings)
-                    if found:
-                        md = md.rstrip() + "\n\n" + "\n\n".join(f"[[FIGURE:{f['n']}]]" for f in found)
-                except Exception as e:
-                    log.warning("figure detection failed for %s: %s", page_id, e)
+            # Always run the dedicated object-cutting pass and merge in anything the reading pass missed.
+            try:
+                det = await detect_figures(ai_jpg, settings)
+                md, found = merge_figures(md, found, det)
+            except Exception as e:
+                log.warning("figure detection failed for %s: %s", page_id, e)
             figures = []
+            if found:
+                found = await refine_figures(full, found)
             for f in found:
                 stored = await crop_and_store(full, page_id, f["box_2d"])
                 if stored:

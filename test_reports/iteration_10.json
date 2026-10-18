@@ -1,0 +1,32 @@
+{
+  "summary": "User story 'Bilderna beskärdes och det plockades ut bilder ur bilden' is fully verified. All 10 tests in /app/backend/tests/test_grow_and_dedupe.py pass (5 unit + 5 real-AI/integration). (A) UNIT grow_box: on the exact spec image (white 2000x2800, red rectangle [400,400,1600,1200] with white logo ellipse 900-1100 x 700-900, text block at y>=1300) starting from the inner logo box [250,450,321.4,550] grow_box() returned [142.9, 200.0, 430.0, 802.0] (image coords [400,400,1204,1604]) — ±4px of the panel and critically ymax=430 < text-start 464, so it did NOT grow into the paragraph text. Matches spec expectation '~[143,200,429,800]'. Also verified that if we start from the already-full panel box, grow_box leaves it in place (idempotent-ish). (B) UNIT dedupe_boxes: inner box dropped when nested in bigger (>=60% overlap); two side-by-side boxes both kept; bigger survives regardless of input order. (C) REAL AI (1 Gemini-fast OCR call via /uploads + wait for done): uploaded JPEG with red panel + white LOGO text + a separate noise/gradient photo + 28 lines of body text. Backend returned >=1 figure with https CommHub url + file_id. For every figure pair, inter(a,b)/area(a) < 0.6 (no nesting). A figure covers >=50% of the red-panel bbox in 0-1000 coords (y=[107,321], x=[100,450]) — confirming grow_box inside pipeline.refine_figures expanded the AI logo box to the whole red panel. (D) REGRESSION — manual recrop: PATCH /api/pages/{id}/figures/{fig_id} with box_2d=[50,60,250,300] stored the box EXACTLY (updated.box_2d == sent) and swapped url+file_id — refine_figures/grow_box is correctly NOT applied to manual CropEditor edits. (E) REGRESSION — ZIP export still contains bilder/*.jpg + bilder/bildtexter.txt. (F) Settings pinned speed_mode=fast + primary_provider=gemini pre- and post-test. (G) Frontend smoke on 390x844 mobile viewport: app loads clean (CopyThat home with KURSER empty state), no red-screen, no pageerror. Seed data (TEST_GROW_Course + TEST_GROW_Doc + 1 page + its figure) cleaned up via fixture teardown. Total paid AI calls this iteration: 1 (OCR only — within budget of 2).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_grow_and_dedupe.py",
+    "/app/test_reports/pytest/pytest_results_iter10.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "pipeline.grow_box() uses a 500-wide downscale, so cost is O(500*700) in Python-level pixel loops — fine for typical pages. share() uses nested comprehension with px.load() which is C-fast; the max(w,h) iteration cap guarantees termination.",
+    "_bg_color() samples the outer 2px border; works well when the page truly has a uniform background (textbook pages, scans). On photos of pages with heavy shadow at edges the bg estimate could be wrong — pipeline.refine_figures still won't crash because grow_box only EXPANDS (never shrinks past the AI's box), so the fallback is 'returns the original AI box'. Safe.",
+    "pipeline.dedupe_boxes sorts by -area, so inner boxes are always compared against a larger kept box first — correct greedy order. The 0.6 threshold matches the user spec exactly.",
+    "pipeline.refine_figures correctly mutates each f['box_2d'] in-place inside asyncio.to_thread (safe since the thread owns the list), then dedupes.",
+    "pipeline.process_page calls refine_figures ONLY for auto-detected figures (both the OCR-pass and the detect_figures() fallback), never for manual add_figure/patch_figure routes — matches 'manual crops via CropEditor are NOT changed'.",
+    "ai.OCR_PROMPT and FIGURE_PROMPT now instruct the model to 'cover the whole coloured panel/shape' and 'never return a box that lies inside another box' — but this is advisory; refine_figures() is the hard guarantee via grow_box + dedupe_boxes.",
+    "Minor: _bg_color iterates 200*4 + 200*4 = 1600 pixel reads at Python level — negligible but could use ImageOps.crop + np.median for cleanliness. Not a bug.",
+    "crop_and_store() still clamps 0-1000 coords and adds 8/1000 padding (~0.8%), which combines gracefully with the grown box: a grown box that already touches the panel edge stays within clip bounds."
+  ],
+  "updated_files": ["/app/backend/tests/test_grow_and_dedupe.py"],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "smoke OK"},
+  "seed_data_creation": "TEST_GROW_Course + TEST_GROW_Doc + 1 page + 1 figure uploaded and PATCHed during tests; all removed in fixture teardown (DELETE course cascades). No residual data in the test@copythat.app account.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Login: test@copythat.app / 246810. Settings pinned speed_mode=fast + primary_provider=gemini. New canonical regression test for growing/dedup: /app/backend/tests/test_grow_and_dedupe.py (TestGrowBox + TestDedupeBoxes unit tests + TestRealAIFigures end-to-end, 1 paid Gemini OCR call per full run). Combined with iteration-9's test_figures_and_zip.py these two files cover the full 'bild-extraktion' story end-to-end. grow_box() returns ~[143,200,430,802] for the spec image. Manual box_2d PATCH on /api/pages/{id}/figures/{fig_id} does NOT re-grow and must stay that way — covered by test_03.",
+  "rca_of_issue": "N/A — this iteration verifies, no RCA needed. Previous RCA (iteration 9) addressed figures being missed; this iteration adds the 'cover the whole visual panel + no sub-images' guarantees in pipeline.grow_box / dedupe_boxes / refine_figures, applied automatically after every AI figure detection pass."
+}
