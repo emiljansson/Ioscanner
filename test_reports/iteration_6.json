@@ -1,0 +1,24 @@
+{
+  "summary": "Frontend-only testing for the new NAPS2/ScanBridge Scanna flow on web (1366x860). All 4 requested checks pass: (1) scan-btn visible in document toolbar, (2) tapping scan-btn opens scan-modal and ScanBridge is unreachable in the test env so scanbridge-missing is shown with the Swedish instructions and the correct window.location.origin 'https://smart-doc-scan-6.preview.emergentagent.com'; scan-retry re-checks and still shows missing; scan-close closes the modal, (3) with Playwright page.route mocking ScanBridge (status->scannerName 'HP MFP 3302', POST /scans->202 {jobId:j1}, GET /scans/j1->completed/pagesScanned=2, GET /scans/j1/document->valid PDF, DELETE->204), the modal switches to the ready state, scanner name is shown, defaults are correctly selected (source-duplex, dpi-300, color-color — verified via computed backgroundColor), POST body sent is {paperSource:'duplex',dpi:300,colorMode:'color',pageSize:'a4'}, scan-start triggers the scan, modal auto-closes on success, upload row 'scanning_2026-10-18_1903.pdf — Uppladdad' is shown and new pages (Sida 2, Sida 3) appear in the document (AI-nyckel saknas error on pages is expected per handoff note), (4) regression: 'Lägg till material' (upload-btn), 'Bearbeta med AI' (ai-open), Word (download-docx), ZIP (download-zip) buttons remain present; no red screen; no page errors.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/tmp/12_scan_modal.png", "/tmp/13_after_retry.png", "/tmp/14_after_close.png", "/tmp/20_scan_modal_ready.png", "/tmp/21_after_scan_start.png", "/tmp/22_after_upload.png"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "scanbridge.ts uses non-standard fetch init property 'targetAddressSpace: loopback' cast via `as RequestInit`. This is a Chrome-only (Private Network Access) option; TypeScript may not know about it. In Firefox/Safari it's silently ignored (ok). Keep an eye on PNA requirements when ScanBridge is served over plain http from loopback — the preview origin is https, so Chrome will require PNA preflight; ScanBridge must respond with Access-Control-Allow-Private-Network: true. Not testable without the real app, just flagging.",
+    "ScanModal: when the scan succeeds, state is set back to 'ready' AFTER onClose() in the success branch. Not harmful (component unmounts after Modal visible=false), but ordering reads oddly; cosmetic.",
+    "scanbridge.ts: polling loop uses a fixed 1 s delay with no backoff/timeout cap — ok for typical scans but could spin forever if backend keeps returning a non-terminal status. Consider a max polling duration."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100%"},
+  "seed_data_creation": "None (used existing 'Kapitel 3' document in course 'Fysik 2' for test@copythat.app).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Login: test@copythat.app / 246810. Scan feature lives in /app/frontend/src/components/ScanModal.tsx + /app/frontend/src/scanbridge.ts; toolbar button in /app/frontend/app/doc/[id].tsx (Platform.OS==='web'). ScanBridge is NOT running in the preview container — the 'missing' state is the only real behaviour available without mocking. To test the happy path, mock http://127.0.0.1:7226/** with Playwright page.route (see this run's script). Expected post-scan: upload row 'scanning_YYYY-MM-DD_HHMM.pdf' then OCR status 'error: AI-nyckel saknas' because no AI keys are configured.",
+  "rca_of_issue": "N/A — no bugs found."
+}

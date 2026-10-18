@@ -11,6 +11,7 @@ import { Button } from "@/src/components/ui";
 import { PageCard } from "@/src/components/PageCard";
 import { AiPanel } from "@/src/components/AiPanel";
 import { MarkdownView } from "@/src/components/MarkdownView";
+import { ScanModal } from "@/src/components/ScanModal";
 import { pickFiles, useDropzone } from "@/src/files";
 import { colors, radius } from "@/src/theme";
 
@@ -30,6 +31,7 @@ export default function DocScreen() {
   const [editingGen, setEditingGen] = useState(false);
   const [genDraft, setGenDraft] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
+  const [scanOpen, setScanOpen] = useState(false);
   const mounted = useRef(true);
 
   const load = useCallback(async () => {
@@ -174,6 +176,7 @@ export default function DocScreen() {
       <View style={styles.toolbar}>
         {!isGen && <Button testID="upload-btn" small variant="primary" icon="cloud-upload-outline" label="Lägg till material" onPress={async () => startUploads(await pickFiles())} />}
         {!isGen && Platform.OS !== "web" && <Button small icon="camera-outline" label="Kamera" onPress={() => router.push(`/capture?doc=${doc.id}`)} />}
+        {!isGen && Platform.OS === "web" && <Button testID="scan-btn" small icon="print-outline" label="Scanna" onPress={() => setScanOpen(true)} />}
         <Button testID="ai-open" small icon="sparkles-outline" label="Bearbeta med AI" onPress={() => setAiOpen((o) => !o)} />
         <Button testID="download-docx" small icon="document-outline" label="Word" onPress={() => download("docx")} />
         <Button testID="download-zip" small icon="archive-outline" label="ZIP" onPress={() => download("zip")} />
@@ -253,6 +256,13 @@ export default function DocScreen() {
         <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setAiOpen(false)}>
           <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }}>{panel}</SafeAreaView>
         </Modal>
+      )}
+      {scanOpen && (
+        <ScanModal
+          visible
+          onClose={() => setScanOpen(false)}
+          onScanned={(file) => startUploads([{ name: file.name, size: file.size, uri: "", file, mimeType: file.type }])}
+        />
       )}
       {dragging && (
         <View style={styles.dragOverlay} pointerEvents="none">

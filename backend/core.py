@@ -134,37 +134,43 @@ async def fetch_bytes(url: str) -> bytes:
 
 
 # ---------------- AI keys ----------------
-# Keys come from CommHub once that endpoint exists (COMMHUB_AI_KEYS_PATH, e.g.
-# "/llm-settings/keys"); until then they fall back to backend/.env.
-_keys_cache: dict = {"at": 0.0, "keys": {}}
+# Keys come from the CommHub keychain (GET /keychain/service/<name>?format=raw, X-API-Key with
+# 'keychain' permission). backend/.env values are only used as fallback.
+_keys_cache: dict = {"at": 0.0, "keys": {}, "ttl": 0}
+KEYCHAIN_NAMES = {"openai": ["openai"], "gemini": ["gemini", "google", "google_gemini"],
+                  "anthropic": ["anthropic", "claude"]}
+
+
+async def _keychain_get(c: httpx.AsyncClient, name: str) -> str:
+    r = await c.get(f"{COMMHUB_BASE}/keychain/service/{name}", params={"format": "raw"},
+                    headers={"X-API-Key": COMMHUB_API_KEY})
+    if r.status_code == 403:
+        log.warning("CommHub keychain: %s", r.text[:200])
+    if r.status_code >= 400:
+        return ""
+    return r.text.strip().strip('"')
 
 
 async def get_ai_keys() -> dict:
-    if time.time() - _keys_cache["at"] < 300:
+    if time.time() - _keys_cache["at"] < _keys_cache["ttl"]:
         return _keys_cache["keys"]
     keys = {
         "openai": os.environ.get("OPENAI_API_KEY", "").strip(),
         "gemini": os.environ.get("GEMINI_API_KEY", "").strip(),
         "anthropic": os.environ.get("ANTHROPIC_API_KEY", "").strip(),
     }
-    path = os.environ.get("COMMHUB_AI_KEYS_PATH", "").strip()
-    if path:
-        try:
-            async with httpx.AsyncClient(timeout=15) as c:
-                r = await c.get(
-                    f"{COMMHUB_BASE}{path}",
-                    params={"app_id": COMMHUB_APP_ID},
-                    headers={"X-API-Key": COMMHUB_API_KEY},
-                )
-            if r.status_code < 400:
-                data = r.json()
-                for p in keys:
-                    v = data.get(p) or data.get(f"{p}_api_key") or data.get(f"{p}_key")
-                    if isinstance(v, str) and v.strip():
-                        keys[p] = v.strip()
-        except Exception as e:
-            log.warning("Could not fetch AI keys from CommHub: %s", e)
-    _keys_cache.update(at=time.time(), keys=keys)
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            for p, names in KEYCHAIN_NAMES.items():
+                for n in names:
+                    v = await _keychain_get(c, n)
+                    if v:
+                        keys[p] = v
+                        break
+    except httpx.HTTPError as e:
+        log.warning("Could not fetch AI keys from CommHub keychain: %s", e)
+    # Cache 5 min when all keys found, otherwise retry after 30 s (e.g. permission just granted).
+    _keys_cache.update(at=time.time(), keys=keys, ttl=300 if all(keys.values()) else 30)
     return keys
 
 

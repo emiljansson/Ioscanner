@@ -15,7 +15,7 @@ and exports Word (.docx) + ZIP (docx + txt + bilder/). All UI in Swedish. Owner:
   backend (6 digits, 10 min, single use, 5 attempts, 30 s resend limit, hashed in db.login_codes) and emailed via
   CommHub `/email/send`; file storage via `/files/upload` (public CloudFront URLs).
 - Allowlist login: only users in `db.users` (owner seeded, owner invites). Own JWT (30 days).
-- AI keys: from CommHub (`COMMHUB_AI_KEYS_PATH`, endpoint not yet available on CommHub) with fallback to backend/.env.
+- AI keys: CommHub keychain GET /keychain/service/<openai|gemini/google|anthropic/claude>?format=raw (API key needs "keychain" permission), fallback backend/.env.
 - Modes: fast (primary only, default) / balanced (+1 verifier) / best (all verifiers). Primary default Gemini.
 - Frontend Expo Router: `login`, `archive` (sidebar courses + search, responsive), `doc/[id]` (upload chunked/drag&drop,
   PageCard edit/rescan/figures crop editor, AiPanel, export), `settings` (mode, provider, users, templates, logout),
