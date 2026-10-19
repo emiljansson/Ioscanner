@@ -64,3 +64,4 @@ templates, settings{id:"global",speed_mode,primary_provider}, uploads.
 - AI JSON robustness: Gemini RECITATION/SAFETY detected (finishReason) -> clear error + fallback to next provider; maxOutputTokens 65536; strip_json repairs LaTeX backslash escapes, raw control chars, salvages truncated markdown; retry once on bad JSON. Repro file: 'Sinnesorganen samlar information.pdf' page 5 (RECITATION).
 - Move doc: MoveModal (src/components) opened from folder icon move-doc-<id> on DocCard; PATCH /documents {course_id}; list + counts update.
 - AI keys: exact keychain service names (openai, gemini, anthropic) take priority; other same-provider services (openai-family) only as fallback. OpenAI now uses service 'openai'.
+- get_ai_keys: listing fallback removed – only exact keychain names (openai, gemini/google/google_gemini, anthropic/claude); openai-family no longer used.
