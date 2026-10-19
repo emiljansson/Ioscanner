@@ -1,5 +1,6 @@
 """Shared infrastructure: config, Mongo, auth (JWT), CommHub client."""
 import os
+import re
 import hmac
 import time
 import uuid
@@ -20,7 +21,21 @@ from motor.motor_asyncio import AsyncIOMotorClient  # noqa: E402
 
 log = logging.getLogger("copythat")
 
-db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+def _mongo_client() -> AsyncIOMotorClient:
+    # Values pasted into hosting dashboards often carry quotes/whitespace.
+    url = os.environ["MONGO_URL"].strip().strip('"').strip("'").strip()
+    try:
+        return AsyncIOMotorClient(url)
+    except Exception as e:
+        masked = re.sub(r"(://[^:/@]+:)[^@]*@", r"\1****@", url)
+        raise RuntimeError(
+            f"MONGO_URL är ogiltig ({e}). Värde (lösenord dolt): {masked} – Format: "
+            "mongodb+srv://USER:PASS@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority . "
+            "Specialtecken i lösenordet (/ @ : ? # %) måste URL-kodas, t.ex. / = %2F, @ = %40."
+        ) from None
+
+
+db = _mongo_client()[os.environ["DB_NAME"].strip()]
 
 COMMHUB_BASE = "https://commhub.cloud/api"
 COMMHUB_APP_ID = os.environ["COMMHUB_APP_ID"]
