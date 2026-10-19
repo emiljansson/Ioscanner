@@ -194,14 +194,15 @@ async def get_ai_keys() -> dict:
     }
     try:
         async with httpx.AsyncClient(timeout=15) as c:
-            # Map keychain services to providers via the listing (e.g. "openai-family" -> openai).
+            # Exact service names first (e.g. "openai"); other services with the same provider in the
+            # listing (e.g. "openai-family") are only used as fallback.
             names = {p: list(v) for p, v in KEYCHAIN_NAMES.items()}
             r = await c.get(f"{COMMHUB_BASE}/keychain/service", headers={"X-API-Key": COMMHUB_API_KEY})
             if r.status_code < 400:
                 for s in r.json().get("services", []):
                     prov = "anthropic" if s.get("provider") == "claude" else s.get("provider")
                     if prov in names and not s.get("is_expired"):
-                        names[prov].insert(0, s["service"])
+                        names[prov].append(s["service"])
             for p, cands in names.items():
                 for n in dict.fromkeys(cands):
                     v = await _keychain_get(c, n)
