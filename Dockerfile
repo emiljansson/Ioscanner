@@ -22,8 +22,7 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY backend/requirements.txt .
-# emergentintegrations (in requirements.txt) lives on this extra index
-RUN pip install --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ -r requirements.txt
+RUN pip install -r requirements.txt
 COPY backend/ ./
 COPY --from=web /web/dist /srv/web
 

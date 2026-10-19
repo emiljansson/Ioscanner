@@ -1,6 +1,6 @@
 # Publicera CopyThat på Railway (en tjänst)
 
-Repo: **iosscanner**, gren **fullscanner** (sparas via "Save to GitHub" i Emergent).
+Repo: **iosscanner**, gren **main** (sparas via "Save to GitHub" i Emergent).
 Allt körs i **en enda Railway-tjänst**. FastAPI-servern sköter `/api/...` och visar dessutom webbversionen på samma adress. Databasen är MongoDB Atlas.
 
 | Fil | Vad den gör |
@@ -20,7 +20,7 @@ iPhone-appen byggs fortfarande via **Publish** i Emergent.
 
 ## 2. Railway-tjänsten
 1. Railway → **New Project → Deploy from GitHub repo** → välj `iosscanner`.
-2. Ställ in **Settings → Source → Branch** på `fullscanner`. Låt **Root Directory** vara tomt, alltså roten.
+2. Ställ in **Settings → Source → Branch** på `main`. Låt **Root Directory** vara tomt, alltså roten.
 3. Lägg in **Variables**:
 
 | Variabel | Värde |
@@ -37,6 +37,12 @@ iPhone-appen byggs fortfarande via **Publish** i Emergent.
    `PORT` och `WEB_DIR` sätts automatiskt och ska inte läggas in.
 4. Gå till **Settings → Networking → Generate Domain**, eller lägg till en egen domän, till exempel `copythat.jawel.se`.
 5. Kontrollera att `https://<domän>/` visar inloggningen och att `https://<domän>/api/health` svarar `{"ok": true}`.
+
+### Om bygget kör `pip install -r requirements.txt` med Python 3.13
+Då använder Railway inte vår `Dockerfile`, utan gissar själv hur appen ska byggas (Railpack). Det beror nästan alltid på att **Root Directory** är satt till `/backend`.
+- Gå till **Settings → Source → Root Directory**, töm fältet och spara.
+- Under **Settings → Build** ska *Builder* vara **Dockerfile** (det står också i `railway.json`).
+- Gör **Redeploy**. I loggen ska det nu stå `FROM node:22-slim` och `FROM python:3.11-slim`.
 
 ## 3. Efter publiceringen
 - Logga in på webben med din e-post. Koden skickas via CommHub.
