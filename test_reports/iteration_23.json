@@ -1,0 +1,40 @@
+{
+  "summary": "Verified the fix for the Gemini RECITATION bug ('AI:n svarade inte med giltig JSON på sida 5 av 6'). Added two new test files: (1) /app/backend/tests/test_strip_json.py – 14 unit tests covering strip_json (valid JSON, fenced ```json blocks, LaTeX backslash escapes like \\sqrt / \\alpha / \\mathrm, raw newlines in strings, long truncated markdown salvage returning {markdown, truncated: True}, short truncated raising AIError 'giltig JSON', empty/whitespace raising 'tomt svar', garbage raising 'giltig JSON') and 3 async tests for call_ai Gemini branch (RECITATION + empty → AIError 'filter … RECITATION', SAFETY + empty → AIError 'filter', RECITATION + non-empty text → text passed through). All 14 unit tests PASS. (2) /app/backend/tests/test_recitation_e2e.py – full E2E against the live preview URL: login test@copythat.app/246810, GET /api/scanner for the key, POST /api/scanner/upload with the actual 'Sinnesorganen samlar information.pdf' as multipart file + X-Scan-Key header, poll /api/documents/{id} until all 6 pages terminal, assert zero pages in 'error' and that page 5 markdown contains 'Hörseln'. Test PASSED in 87 s. Backend logs confirm the exact fallback path: 'read attempt 1 with gemini failed: Gemini: svaret stoppades av Googles filter (RECITATION) – texten liknar upphovsrättsskyddat material', then OpenAI processed the page successfully. Document cleaned up afterwards. Also added /app/pytest.ini with asyncio_mode=auto so the async tests run cleanly in future iterations (pytest-asyncio 1.4.0 installed).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_strip_json.py",
+    "/app/backend/tests/test_recitation_e2e.py",
+    "/app/test_reports/pytest/pytest_results_iter23_e2e.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "ai.strip_json: BAD_ESCAPE_RE correctly repairs raw LaTeX backslashes (\\sqrt, \\alpha, \\mathrm) and json.loads(strict=False) accepts raw newlines/tabs — both verified by unit tests.",
+    "ai.strip_json: MD_FIELD_RE salvage path returns {markdown, truncated: True} only when the salvaged markdown is >200 chars, so a short unterminated JSON correctly raises AIError 'giltig JSON' instead of silently returning garbage.",
+    "ai.call_ai gemini branch: finishReason check correctly catches RECITATION / SAFETY / BLOCKLIST / PROHIBITED_CONTENT / OTHER only when the text is empty (if any text arrived we pass it through) — verified by three unit tests.",
+    "ai.read_page.primary_call: on 'filter' errors the provider is added to blocked set and the next provider in the chain is tried, which the E2E confirmed by falling back from gemini → openai on page 5.",
+    "Gemini maxOutputTokens is set to 65536 (ai.py:176) — sufficient to not hit MAX_TOKENS on the 6-page textbook test."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_strip_json.py (new, 14 tests)",
+    "/app/backend/tests/test_recitation_e2e.py (new, 1 E2E test)",
+    "/app/pytest.ini (new – asyncio_mode=auto, testpaths=backend/tests)"
+  ],
+  "success_rate": {
+    "backend": "100% (14/14 unit + 1/1 E2E)",
+    "frontend": "n/a (backend-only request)"
+  },
+  "seed_data_creation": "E2E created one scan document via POST /api/scanner/upload with the 6-page sinnesorganen PDF and deleted it in the test's finally block (verified via DELETE /api/documents/{id}).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "pytest-asyncio 1.4.0 is now installed and /app/pytest.ini sets asyncio_mode=auto, so async def tests work without decorators. Run full backend suite with: cd /app && pytest backend/tests/ -v --tb=short. The E2E test takes ~90 s because it makes real AI calls (Gemini + OpenAI fallback on page 5). AI keys for gemini + openai are configured via CommHub keychain; anthropic is NOT. Expected noise in /var/log/supervisor/backend.err.log: 'read attempt 1 with gemini failed: … RECITATION' — this is the fix working, not a bug.",
+  "rca_of_issue": "RCA: 'Sinnesorganen samlar information.pdf' page 5 contains verbatim Swedish textbook text about the ear ('Hörseln'). Google Gemini's safety classifier flagged it as potentially copyrighted and returned a response with finishReason=RECITATION and an empty content.parts array. The old parser treated the empty text as 'invalid JSON' and surfaced a confusing Swedish error to the user. Fix (/app/backend/ai.py): (a) call_ai's gemini branch now inspects finishReason; if it is RECITATION/SAFETY/BLOCKLIST/PROHIBITED_CONTENT/OTHER AND the text is empty, it raises AIError('… filter … <REASON>') so the caller can distinguish filter-block from parse failure; (b) read_page.primary_call now retries once on bad/empty JSON, but on filter blocks adds the provider to a 'blocked' set and falls back to the next available service (OpenAI). (c) strip_json repairs LaTeX backslash escapes (\\sqrt, \\alpha, \\mathrm), accepts raw control chars (strict=False), and salvages a long truncated markdown field when the JSON object itself is unterminated. (d) Gemini generationConfig.maxOutputTokens raised to 65536. Reproduction: upload the 6-page PDF via /api/scanner/upload; expected observable: page 5 goes done (not error) and backend logs show one 'RECITATION' warning followed by a successful OpenAI read. Mitigation verified end-to-end in this iteration."
+}

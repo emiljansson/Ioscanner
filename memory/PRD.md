@@ -61,3 +61,4 @@ templates, settings{id:"global",speed_mode,primary_provider}, uploads.
 - Archive sidebar widened to 340px; course input minWidth 0 so 'Lägg till' fits (verified iteration_20).
 - Delete auto-reload: api fetch cache:no-store + backend no-store middleware for /api; documentDeleted()/onDocumentDeleted() event removes doc from archive list + search hits instantly.
 - Rename: RenameModal (src/components) for courses (pencil rename-course in course header) and docs (rename-doc-<id> on DocCard); doc page pencil doc-rename focuses title input.
+- AI JSON robustness: Gemini RECITATION/SAFETY detected (finishReason) -> clear error + fallback to next provider; maxOutputTokens 65536; strip_json repairs LaTeX backslash escapes, raw control chars, salvages truncated markdown; retry once on bad JSON. Repro file: 'Sinnesorganen samlar information.pdf' page 5 (RECITATION).

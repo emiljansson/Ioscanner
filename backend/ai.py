@@ -87,18 +87,41 @@ class AIError(Exception):
     pass
 
 
+BAD_ESCAPE_RE = re.compile(r'\\(?!["\\/bfnrtu])|\\u(?![0-9a-fA-F]{4})')  # e.g. LaTeX \sqrt, \alpha inside JSON strings
+MD_FIELD_RE = re.compile(r'"markdown"\s*:\s*"((?:[^"\\]|\\.)*)', re.S)
+
+
+def _loads(s: str):
+    for cand in (s, BAD_ESCAPE_RE.sub(r"\\\\", s)):
+        try:
+            return json.loads(cand, strict=False)  # strict=False: allow raw newlines/tabs in strings
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
 def strip_json(raw: str) -> dict:
     s = (raw or "").strip()
+    if not s:
+        raise AIError("AI:n gav ett tomt svar")
     if s.startswith("```"):
         s = re.sub(r"^```[a-zA-Z]*\n?", "", s)
         s = re.sub(r"\n?```$", "", s).strip()
-    try:
-        return json.loads(s)
-    except json.JSONDecodeError:
+    data = _loads(s)
+    if data is None:
         m = re.search(r"\{.*\}", s, re.S)
-        if m:
-            return json.loads(m.group(0))
-        raise AIError("AI:n svarade inte med giltig JSON")
+        data = _loads(m.group(0)) if m else None
+    if isinstance(data, dict):
+        return data
+    # Truncated answer: keep the markdown that did arrive rather than losing the whole page.
+    m = MD_FIELD_RE.search(s)
+    if m and len(m.group(1)) > 200:
+        md = _loads('"' + m.group(1).rstrip("\\") + '"')
+        if isinstance(md, str):
+            log.warning("AI JSON was truncated – salvaged %s chars of markdown", len(md))
+            return {"markdown": md, "truncated": True}
+    log.warning("invalid AI JSON (%s chars): %r … %r", len(s), s[:200], s[-200:])
+    raise AIError("AI:n svarade inte med giltig JSON")
 
 
 async def _post(url: str, headers: dict, body: dict, timeout: int, label: str) -> dict:
@@ -150,16 +173,23 @@ async def call_ai(provider: str, model: str, prompt: str, image_jpeg: bytes | No
         parts = [{"text": prompt}]
         if b64:
             parts.append({"inline_data": {"mime_type": "image/jpeg", "data": b64}})
-        body = {"contents": [{"role": "user", "parts": parts}]}
+        body = {"contents": [{"role": "user", "parts": parts}], "generationConfig": {"maxOutputTokens": 65536}}
         if want_json:
-            body["generationConfig"] = {"responseMimeType": "application/json"}
+            body["generationConfig"]["responseMimeType"] = "application/json"
         if system:
             body["systemInstruction"] = {"parts": [{"text": system}]}
         data = await _post(
             f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
             {}, body, timeout, label)
         cands = data.get("candidates") or [{}]
-        return "".join(p.get("text", "") for p in (cands[0].get("content") or {}).get("parts", []))
+        reason = cands[0].get("finishReason") or (data.get("promptFeedback") or {}).get("blockReason")
+        text = "".join(p.get("text", "") for p in (cands[0].get("content") or {}).get("parts", []) if not p.get("thought"))
+        if reason in ("RECITATION", "SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "OTHER") and not text.strip():
+            raise AIError(f"{label}: svaret stoppades av Googles filter ({reason}) – "
+                          + ("texten liknar upphovsrättsskyddat material" if reason == "RECITATION" else "innehållet blockerades"))
+        if reason == "MAX_TOKENS":
+            log.warning("gemini answer hit MAX_TOKENS (%s chars)", len(text))
+        return text
     content = []
     if b64:
         content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}})
@@ -277,8 +307,24 @@ async def read_page(image_jpeg: bytes, settings: dict, prev_markdown: str | None
     timeout = TIMEOUTS[mode]
 
     async def primary_call():
-        raw = await call_ai(primary, model_for(primary, mode, settings), prompt, image_jpeg, timeout, want_json=True)
-        return strip_json(raw)
+        # Bad/blocked JSON is usually a one-off: retry once, then let another AI service read the page.
+        # A content-filter block (e.g. Gemini RECITATION on textbook pages) won't change on retry -> next service.
+        chain = [primary, primary] + [p for p in others if p != primary][:1]
+        last, blocked = None, set()
+        for i, p in enumerate(chain):
+            if p in blocked:
+                continue
+            try:
+                raw = await call_ai(p, model_for(p, mode, settings), prompt, image_jpeg, timeout, want_json=True)
+                return strip_json(raw)
+            except AIError as e:
+                last = e
+                if "filter" in str(e):
+                    blocked.add(p)
+                elif "JSON" not in str(e) and "tomt svar" not in str(e):
+                    raise
+                log.warning("read attempt %s with %s failed: %s", i + 1, p, e)
+        raise last
 
     async def verify_call(p):
         return await call_ai(p, model_for(p, "fast", settings), VERIFY_PROMPT, image_jpeg, TIMEOUTS["fast"], want_json=False)
