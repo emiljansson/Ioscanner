@@ -1,0 +1,9 @@
+node_modules/
+.expo/
+.metro-cache/
+dist/
+web-build/
+.env
+.env.*
+ios/
+android/
