@@ -49,3 +49,4 @@ templates, settings{id:"global",speed_mode,primary_provider}, uploads.
 - PDF styled like Word: bundled Carlito fonts (backend/fonts, Calibri-metric), 12pt body, headings #0F4761 20/16/14pt, A4 2.54cm margins.
 - Settings: 'Mejla skriptet till mig' (POST /api/scanner/script/email?base=) for iPhone users; script stored in CommHub, link emailed.
 - Model picker: owner taps model name in Settings > AI-tjänster -> ModelPicker lists live models (GET /api/settings/models/{provider}); PUT /settings {model_override:{provider,mode,model|null}} stored in settings.model_overrides; ai.model_for() used everywhere.
+- Note: in preview the backend supervisor program has autostart=false (read-only config); after a pod restart run 'sudo supervisorctl start backend' (502 otherwise). Web preview URL: https://smart-doc-scan-6.preview.emergentagent.com
