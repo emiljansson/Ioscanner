@@ -1,0 +1,26 @@
+{
+  "summary": "Backend-only testing of the Railway env-var fix in /app/backend/core.py. Wrote /app/backend/tests/test_core_env_validation.py (11 tests, 100% pass). Live preview smoke: /api/health, /api/auth/request-code + /api/auth/verify (test@copythat.app / 246810), /api/settings (bearer), /api/courses (bearer) — all 200. Isolated-subprocess tests (env -i + dotenv.load_dotenv monkey-patched to no-op, cwd=/tmp) covered: (a) only MONGO_URL set -> RuntimeError 'Miljövariabler saknas: DB_NAME, COMMHUB_APP_ID, COMMHUB_API_KEY, JWT_SECRET ...'; (b) all-missing lists all five; (c) whitespace/empty-quote values treated as missing; (d) values wrapped in double or single quotes (and surrounding whitespace) imported successfully with core.COMMHUB_APP_ID / API_KEY / JWT_SECRET / db.name stripped clean; (e) MONGO_URL='mongodb://u:p@h:27017//' -> RuntimeError starting with 'MONGO_URL är ogiltig' and password masked as 'u:****@h' (also verified with a longer password 'S3cretPass' — never appears in message).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_core_env_validation.py",
+    "/app/test_reports/pytest/pytest_results_iter19.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "core.py:26 — the per-var 'missing' check does `.strip().strip('\"').strip(\"'\").strip()` which happens to also treat values like '\"\"' or \"'  '\" as missing. That is defensible but worth a one-line comment so future maintainers don't 'simplify' it.",
+    "core.py:42-48 — `except Exception as e: ... raise RuntimeError(...) from None` deliberately suppresses the original cause. OK for user-facing clarity, but the pymongo InvalidURI/ConfigurationError text is still embedded via f-string, so no information is lost. Keep as is."
+  ],
+  "updated_files": ["/app/backend/tests/test_core_env_validation.py"],
+  "success_rate": {"backend": "100%", "frontend": "N/A (backend-only run)"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The env-validation tests spawn an isolated python subprocess with a cleaned environment and monkey-patch `dotenv.load_dotenv` to a no-op BEFORE importing /app/backend/core.py, so backend/.env cannot leak in. The import is done as `import core` with sys.path = ['/app', '/app/backend', ...] and cwd=/tmp. Live-backend smoke still uses EXPO_PUBLIC_BACKEND_URL + test@copythat.app / 246810 (login response field is 'token', not 'access_token').",
+  "rca_of_issue": "N/A — this iteration verified a code fix rather than reproducing a defect. The Railway crash root cause was that /app/backend/core.py accessed os.environ['COMMHUB_APP_ID'] at import time and raised KeyError when the Railway service was deployed without that variable, killing the container with an opaque Python traceback. The fix (lines 24-29) replaces that with an explicit REQUIRED_ENV list and a single Swedish RuntimeError that enumerates every missing variable, so an operator can set them all in one dashboard round-trip; _env() additionally forgives common dashboard paste mistakes (wrapping quotes, trailing spaces); and _mongo_client() turns a malformed MONGO_URL into a Swedish error with the password masked so it is safe to copy into a bug report."
+}

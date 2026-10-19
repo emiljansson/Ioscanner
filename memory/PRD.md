@@ -56,3 +56,4 @@ templates, settings{id:"global",speed_mode,primary_provider}, uploads.
 - Removed unused emergentintegrations from backend/requirements.txt (Railway build failed: not on PyPI).
 - Dockerfile: yarn.lock optional (wasn't in GitHub repo); frontend/yarn.lock force-added to git.
 - core.py: MONGO_URL stripped of quotes/whitespace; invalid URL raises clear Swedish error with masked password.
+- core.py: REQUIRED_ENV check lists all missing vars at once; _env() strips quotes. Railway needs MONGO_URL, DB_NAME, COMMHUB_APP_ID, COMMHUB_API_KEY, JWT_SECRET (+OWNER_EMAIL).

@@ -21,9 +21,22 @@ from motor.motor_asyncio import AsyncIOMotorClient  # noqa: E402
 
 log = logging.getLogger("copythat")
 
+# Fail fast with ONE clear message listing every missing variable (instead of one KeyError per deploy).
+REQUIRED_ENV = ["MONGO_URL", "DB_NAME", "COMMHUB_APP_ID", "COMMHUB_API_KEY", "JWT_SECRET"]
+_missing = [k for k in REQUIRED_ENV if not os.environ.get(k, "").strip().strip('"').strip("'").strip()]
+if _missing:
+    raise RuntimeError("Miljövariabler saknas: " + ", ".join(_missing)
+                       + ". Lägg in dem under Variables hos din värd (t.ex. Railway) och starta om.")
+
+
+def _env(key: str) -> str:
+    """Env value with surrounding quotes/whitespace removed (common when pasted into dashboards)."""
+    return os.environ[key].strip().strip('"').strip("'").strip()
+
+
 def _mongo_client() -> AsyncIOMotorClient:
     # Values pasted into hosting dashboards often carry quotes/whitespace.
-    url = os.environ["MONGO_URL"].strip().strip('"').strip("'").strip()
+    url = _env("MONGO_URL")
     try:
         return AsyncIOMotorClient(url)
     except Exception as e:
@@ -35,12 +48,12 @@ def _mongo_client() -> AsyncIOMotorClient:
         ) from None
 
 
-db = _mongo_client()[os.environ["DB_NAME"].strip()]
+db = _mongo_client()[_env("DB_NAME")]
 
 COMMHUB_BASE = "https://commhub.cloud/api"
-COMMHUB_APP_ID = os.environ["COMMHUB_APP_ID"]
-COMMHUB_API_KEY = os.environ["COMMHUB_API_KEY"]
-JWT_SECRET = os.environ["JWT_SECRET"]
+COMMHUB_APP_ID = _env("COMMHUB_APP_ID")
+COMMHUB_API_KEY = _env("COMMHUB_API_KEY")
+JWT_SECRET = _env("JWT_SECRET")
 OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "").strip().lower()
 TEST_LOGIN_EMAIL = os.environ.get("TEST_LOGIN_EMAIL", "").strip().lower()
 TEST_LOGIN_CODE = os.environ.get("TEST_LOGIN_CODE", "").strip()
