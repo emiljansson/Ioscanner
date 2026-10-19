@@ -52,3 +52,4 @@ templates, settings{id:"global",speed_mode,primary_provider}, uploads.
 - Note: in preview the backend supervisor program has autostart=false (read-only config); after a pod restart run 'sudo supervisorctl start backend' (502 otherwise). Web preview URL: https://smart-doc-scan-6.preview.emergentagent.com
 - Settings card renamed 'Skanna från datorn' explaining 1) ScanBridge 'Scanna' button (web, adds to open doc) and 2) NAPS2 script.
 - Railway prep: backend/Dockerfile+railway.json+.dockerignore, frontend/Dockerfile (static expo export + serve)+railway.json+serve.json+.dockerignore, /app/RAILWAY.md guide (Atlas, env vars). Repo iosscanner branch fullscanner.
+- Railway now ONE service: root Dockerfile (stage1 expo web export with EXPO_PUBLIC_BACKEND_URL='' -> relative /api; stage2 python + WEB_DIR=/srv/web), root railway.json + .dockerignore. server.py serves WEB_DIR catch-all (doc/preview [id].html) when WEB_DIR set. Per-folder Railway files removed.

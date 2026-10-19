@@ -1,4 +1,5 @@
 """CopyThat API – AI-OCR for study material."""
+import os
 import re
 import secrets
 import shutil
@@ -816,6 +817,29 @@ async def health():
 
 
 app.include_router(api)
+
+# Single-service deploy (Railway): serve the exported web app from the same server when WEB_DIR is set.
+WEB_DIR = Path(os.environ["WEB_DIR"]).resolve() if os.environ.get("WEB_DIR") else None
+if WEB_DIR and (WEB_DIR / "index.html").is_file():
+    from fastapi.responses import FileResponse
+
+    @app.get("/{path:path}", include_in_schema=False)
+    async def web_app(path: str):
+        if path.startswith("api/"):
+            raise HTTPException(404, "Hittades inte")
+        f = (WEB_DIR / path).resolve()
+        if WEB_DIR in f.parents:
+            if f.is_file():
+                cache = "public, max-age=31536000, immutable" if path.startswith("_expo/") else "no-cache"
+                return FileResponse(f, headers={"Cache-Control": cache})
+            if f.with_name(f.name + ".html").is_file():
+                return FileResponse(f.with_name(f.name + ".html"), headers={"Cache-Control": "no-cache"})
+        first = path.split("/", 1)[0]
+        dynamic = WEB_DIR / first / "[id].html"  # /doc/<id>, /preview/<id>
+        if "/" in path and dynamic.is_file():
+            return FileResponse(dynamic, headers={"Cache-Control": "no-cache"})
+        return FileResponse(WEB_DIR / "index.html", headers={"Cache-Control": "no-cache"})
+
 app.add_middleware(CORSMiddleware, allow_credentials=False, allow_origins=["*"], allow_methods=["*"],
                    allow_headers=["*"])
 
