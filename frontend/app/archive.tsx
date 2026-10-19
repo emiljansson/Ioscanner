@@ -7,6 +7,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api, type Course, type Doc, onDocumentDeleted } from "@/src/api";
 import { RenameModal } from "@/src/components/RenameModal";
+import { MoveModal } from "@/src/components/MoveModal";
 import { Button } from "@/src/components/ui";
 import { colors, radius } from "@/src/theme";
 
@@ -34,6 +35,14 @@ export default function Archive() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [renaming, setRenaming] = useState<{ kind: "course" | "doc"; id: string; name: string } | null>(null);
+
+  const [moving, setMoving] = useState<Doc | null>(null);
+  const moveDoc = async (courseId: string) => {
+    if (!moving) return;
+    await api(`/documents/${moving.id}`, { method: "PATCH", body: { course_id: courseId } });
+    setDocs((ds) => ds?.filter((d) => d.id !== moving.id) ?? ds);
+    loadCourses(); // document counts
+  };
 
   const rename = async (name: string) => {
     if (!renaming) return;
@@ -276,7 +285,12 @@ export default function Archive() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await loadDocs(course.id); setRefreshing(false); }} />}
           ListEmptyComponent={<Text style={styles.empty}>Inga dokument än. Skapa ett och ladda upp bilder eller PDF:er.</Text>}
           renderItem={({ item }) => (
-            <DocCard doc={item} onPress={() => router.push(`/doc/${item.id}`)} onRename={() => setRenaming({ kind: "doc", id: item.id, name: item.title })} />
+            <DocCard
+              doc={item}
+              onPress={() => router.push(`/doc/${item.id}`)}
+              onRename={() => setRenaming({ kind: "doc", id: item.id, name: item.title })}
+              onMove={() => setMoving(item)}
+            />
           )}
         />
       )}
@@ -285,6 +299,15 @@ export default function Archive() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+      {moving && course && (
+        <MoveModal
+          docTitle={moving.title}
+          currentCourseId={course.id}
+          courses={courses ?? []}
+          onMove={moveDoc}
+          onClose={() => setMoving(null)}
+        />
+      )}
       {renaming && (
         <RenameModal
           title={renaming.kind === "course" ? "Byt namn på kurs" : "Byt namn på dokument"}
@@ -314,7 +337,7 @@ export default function Archive() {
   );
 }
 
-function DocCard({ doc, onPress, onRename }: { doc: Doc; onPress: () => void; onRename: () => void }) {
+function DocCard({ doc, onPress, onRename, onMove }: { doc: Doc; onPress: () => void; onRename: () => void; onMove: () => void }) {
   const c = doc.page_counts ?? {};
   const pending = (c.queued ?? 0) + (c.processing ?? 0);
   return (
@@ -324,6 +347,9 @@ function DocCard({ doc, onPress, onRename }: { doc: Doc; onPress: () => void; on
         <Text style={styles.docTitle} numberOfLines={1}>
           {doc.title}
         </Text>
+        <Pressable testID={`move-doc-${doc.id}`} onPress={onMove} hitSlop={8} style={[styles.renameBtn, { marginLeft: "auto" }]} accessibilityLabel="Flytta dokument till annan kurs">
+          <Ionicons name="folder-open-outline" size={18} color={colors.muted} />
+        </Pressable>
         <Pressable testID={`rename-doc-${doc.id}`} onPress={onRename} hitSlop={8} style={styles.renameBtn} accessibilityLabel="Byt namn på dokument">
           <Ionicons name="create-outline" size={18} color={colors.muted} />
         </Pressable>
@@ -365,7 +391,7 @@ const styles = StyleSheet.create({
   main: { flex: 1, padding: 24, gap: 12, maxWidth: 1000 },
   mainHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
   h1: { fontSize: 26, fontWeight: "800", color: colors.text, flexShrink: 1 },
-  renameBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center", marginLeft: "auto" },
+  renameBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
   docCard: { backgroundColor: colors.surface, borderRadius: radius.md, padding: 16, borderWidth: 1, borderColor: colors.border, gap: 6 },
   docRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   docTitle: { fontSize: 16, fontWeight: "600", color: colors.text, flex: 1 },

@@ -1,0 +1,34 @@
+{
+  "summary": "Verified the new 'Move documents between courses' feature end-to-end on web (Expo web preview). All acceptance criteria from the review request pass. Desktop 1280x800: logged in via POST /api/auth/request-code + /api/auth/verify (test@copythat.app / 246810), injected token into localStorage['copythat.token'], created TEST_A & TEST_B via UI, created doc 'TEST_doc_move' in TEST_A. Clicking move-doc-<id> did NOT navigate to the doc (URL unchanged: /archive) — onPress is correctly scoped to the folder icon. move-modal opened; it listed TEST_B and Inkorg (the account's pre-existing default course) but did NOT list TEST_A (self-filter works). move-cancel closes the modal with no change. Clicking the backdrop (outside the card) also closes the modal with no change. Clicking move-to-<TEST_B id> issued PATCH /api/documents/{id} {course_id}: modal closed, doc disappeared from TEST_A list immediately, sidebar counts updated instantly to TEST_A=0 / TEST_B=1, doc visible in TEST_B, and still there after full page reload (GET /api/documents?course_id=B returns TEST_doc_move). Regression: rename-doc-<id> still opens the RenameModal. Mobile 390x844: same flow works — doc card shows both the move (folder-open-outline) and rename (create-outline) icons without overflow, title truncates, moved doc from TEST_B back to TEST_A (counts flipped A=1 / B=0). Cleaned up by DELETE /api/courses/{TEST_A id} and /api/courses/{TEST_B id} — both returned 200.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/tmp/archive_test_a.png (desktop: doc card with move+rename icons)",
+    "/tmp/move_modal_open.png (desktop: move modal listing TEST_B, no TEST_A)",
+    "/tmp/after_move.png (desktop: doc gone from A, sidebar A=0 B=1)",
+    "/tmp/mobile_doc_card.png (mobile 390: both icons fit, title truncated)",
+    "/tmp/mobile_move_modal.png (mobile: move modal)"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "MoveModal.tsx:20 targets = courses.filter(c => c.id !== currentCourseId) — correctly excludes the current course. Verified the opened modal had 2 rows (Inkorg + TEST_B) when the doc was in TEST_A, and did not include TEST_A.",
+    "MoveModal.tsx:35 Modal transparent + animationType='fade' with a Pressable absoluteFill backdrop before the card — outside-tap-to-close works on web.",
+    "archive.tsx:40-45 moveDoc: optimistic setDocs(filter id) then loadCourses() for count refresh — observable as immediate list disappearance and up-to-date sidebar counts without a visible flicker.",
+    "archive.tsx:350 move-doc button has hitSlop={8} and 36x36 inner size which combined gives >44pt effective tap target. Icon lives inside its own Pressable with onPress={onMove}; outer docCard Pressable's onPress still navigates to /doc/id when the card is tapped elsewhere — no event propagation issue observed (URL stayed on /archive when tapping the move icon).",
+    "'Det finns ingen annan kurs' branch (MoveModal.tsx:42) was not exercised because the test account always has the system Inkorg course. The code path is a trivial length check so this is low risk; recommend the main agent add a UI unit test or allow a seed-time flag to simulate the single-course state if deeper coverage is desired."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "n/a (frontend-only request; backend PATCH /documents/{id} with {course_id} responded 200 for every call)",
+    "frontend": "100% — all 8 acceptance checks (no-nav, self-filter, cancel, outside-click, move, immediate removal, sidebar counts, reload persistence) + regression (rename) + mobile viewport passed"
+  },
+  "seed_data_creation": "Created 2 courses (TEST_A, TEST_B) and 1 document (TEST_doc_move). All cleaned up at end of test via DELETE /api/courses/{id} (cascades to the doc).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Login pattern that works for the Expo web preview: POST {EXPO_PUBLIC_BACKEND_URL}/api/auth/request-code {email}, then /api/auth/verify {email,code=246810}, body.token is a string; set localStorage['copythat.token'] = JSON.stringify(token) BEFORE reload. The test account always has a system 'Inkorg' course in addition to any TEST_ courses — so the 'no other course' / single-course branch of MoveModal cannot be exercised through this user without extra backend seeding. move-doc-<id> and rename-doc-<id> live inside the docCard Pressable; onPress on the inner Pressables does not propagate on web (verified), so clicking them does not open the document."
+}
