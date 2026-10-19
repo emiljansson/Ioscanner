@@ -57,3 +57,5 @@ templates, settings{id:"global",speed_mode,primary_provider}, uploads.
 - Dockerfile: yarn.lock optional (wasn't in GitHub repo); frontend/yarn.lock force-added to git.
 - core.py: MONGO_URL stripped of quotes/whitespace; invalid URL raises clear Swedish error with masked password.
 - core.py: REQUIRED_ENV check lists all missing vars at once; _env() strips quotes. Railway needs MONGO_URL, DB_NAME, COMMHUB_APP_ID, COMMHUB_API_KEY, JWT_SECRET (+OWNER_EMAIL).
+- pipeline: per-page timeout (PAGE_TIMEOUT_S=600), PAGE_CONCURRENCY env (default 3), resume_pending gives up after 2 restarts mid-processing (OOM loop guard). Railway AI stuck issue: awaiting deploy logs.
+- Archive sidebar widened to 340px; course input minWidth 0 so 'Lägg till' fits (verified iteration_20).

@@ -34,6 +34,8 @@ iPhone-appen byggs fortfarande via **Publish** i Emergent.
 | `TEST_LOGIN_EMAIL` / `TEST_LOGIN_CODE` | **Lägg inte in i produktion.** Bara för test. |
 | `OPENAI_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` | Valfria reservnycklar. Normalt hämtas AI-nycklarna från CommHubs nyckelförråd. |
 
+   Valfritt: `PAGE_CONCURRENCY` = hur många sidor som analyseras samtidigt (standard 3). Sätt `1` på små planer om AI-analysen fastnar eller tjänsten startar om (för lite minne).
+
    `PORT` och `WEB_DIR` sätts automatiskt och ska inte läggas in.
 4. Gå till **Settings → Networking → Generate Domain**, eller lägg till en egen domän, till exempel `copythat.jawel.se`.
 5. Kontrollera att `https://<domän>/` visar inloggningen och att `https://<domän>/api/health` svarar `{"ok": true}`.

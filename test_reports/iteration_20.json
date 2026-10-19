@@ -1,0 +1,22 @@
+{
+  "summary": "Verified archive.tsx sidebar fix. On desktop viewports 1680x1000 and 1280x800 the sidebar is now 340px wide and the 'Lägg till' (new-course-btn) button sits fully inside the sidebar (button right edge = 323px vs sidebar right edge = 340px; 17px to spare). The 'Ny kurs…' input (new-course-input) also stays inside the sidebar. Create-course flow works end-to-end (TEST_SidebarFit_... course was created, appeared in the Kurser list, and was then deleted via the trash button to clean up). Mobile 390x844 regression check passed — input+button fit on screen (button right=374 within 390 viewport). No layout regressions observed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "archive.tsx sidebar fix is correct: sidebarWide=340 (styles L311), addInput has minWidth:0 (L325), new-course-btn passes style={{flexShrink:0}} (L168). Changes are minimal and targeted."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a", "frontend": "100%"},
+  "seed_data_creation": "Created and then deleted one test course 'TEST_SidebarFit_<timestamp>' via UI. No residual data.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Login: UI flow on /login with testID login-email, login-send-code, login-code (246810), login-verify. AsyncStorage on web uses IndexedDB, NOT localStorage, so setting localStorage['copythat.token'] does not authenticate the app — always use the UI login flow.",
+  "rca_of_issue": "Original bug: sidebarWide was 280px; the 'Lägg till' button overflowed past the sidebar's right border because the TextInput didn't have minWidth:0 (flex child default minWidth is auto/content-based) and the button could be pushed outside. Fix: widened sidebar to 340px, added minWidth:0 to addInput so it can shrink, and flexShrink:0 to the button so it keeps its intrinsic width. Verified: button right edge now sits 17px inside the sidebar's right border on both 1680 and 1280 viewports."
+}

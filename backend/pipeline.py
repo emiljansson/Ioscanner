@@ -2,6 +2,7 @@
 import io
 import re
 import asyncio
+import os
 from pathlib import Path
 
 import pymupdf
@@ -17,7 +18,10 @@ register_heif_opener()
 MAX_PAGES = 200
 CACHE = Path("/tmp/copythat_cache")
 CACHE.mkdir(parents=True, exist_ok=True)
-_sem = asyncio.Semaphore(3)
+# Pages processed at the same time. Lower (e.g. 1) on small hosting plans to save memory.
+_sem = asyncio.Semaphore(max(1, int(os.environ.get("PAGE_CONCURRENCY", "3"))))
+PAGE_TIMEOUT_S = int(os.environ.get("PAGE_TIMEOUT_S", "600"))  # whole page incl. all AI calls
+MAX_RESUMES = 2  # a page that keeps getting interrupted by server restarts is marked as failed
 
 
 def _jpeg(img: Image.Image, max_side: int, quality: int = 88) -> bytes:
@@ -191,6 +195,20 @@ async def settings_doc() -> dict:
 
 async def process_page(page_id: str, rescan: bool = False) -> None:
     async with _sem:
+        try:
+            await asyncio.wait_for(_process_page(page_id, rescan), PAGE_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            log.error("page %s timed out after %ss", page_id, PAGE_TIMEOUT_S)
+            await db.pages.update_one({"id": page_id, "status": "processing"}, {"$set": {
+                "status": "error", "error": f"Analysen tog för lång tid (över {PAGE_TIMEOUT_S // 60} min). Försök igen.",
+                "updated_at": now()}})
+            page = await db.pages.find_one({"id": page_id}, {"_id": 0, "document_id": 1})
+            if page:
+                await maybe_autosort(page["document_id"])
+
+
+async def _process_page(page_id: str, rescan: bool = False) -> None:
+    if True:
         page = await db.pages.find_one({"id": page_id}, {"_id": 0})
         if not page:
             return
@@ -241,7 +259,7 @@ async def process_page(page_id: str, rescan: bool = False) -> None:
             kept = {f["n"] for f in figures}
             md = re.sub(r"\[\[FIGURE:(\d+)\]\]", lambda m: m.group(0) if int(m.group(1)) in kept else "", md)
             await db.pages.update_one({"id": page_id}, {"$set": {
-                "status": "done", "markdown": md, "figures": figures, "attempts": attempts,
+                "status": "done", "markdown": md, "figures": figures, "attempts": attempts, "resumes": 0,
                 "confidence": res["confidence"], "page_number": res["page_number"], "ai": res,
                 "updated_at": now(),
             }})
@@ -279,5 +297,15 @@ def enqueue(page_id: str, rescan: bool = False) -> None:
 
 
 async def resume_pending() -> None:
-    async for p in db.pages.find({"status": {"$in": ["queued", "processing"]}}, {"id": 1}):
+    """Restart pages that were interrupted by a server restart. If a page keeps being interrupted
+    (e.g. the server runs out of memory on it), give up instead of crash-looping forever."""
+    async for p in db.pages.find({"status": {"$in": ["queued", "processing"]}}, {"id": 1, "resumes": 1, "status": 1}):
+        if p["status"] == "processing" and (p.get("resumes") or 0) >= MAX_RESUMES:
+            log.error("page %s interrupted %s times – marking as error", p["id"], p.get("resumes"))
+            await db.pages.update_one({"id": p["id"]}, {"$set": {
+                "status": "error", "resumes": 0, "updated_at": now(),
+                "error": "Servern startade om under analysen flera gånger (troligen för lite minne). Försök igen."}})
+            continue
+        if p["status"] == "processing":
+            await db.pages.update_one({"id": p["id"]}, {"$inc": {"resumes": 1}})
         enqueue(p["id"])

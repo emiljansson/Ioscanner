@@ -165,7 +165,7 @@ export default function Archive() {
           onChangeText={setNewCourse}
           onSubmitEditing={addCourse}
         />
-        <Button testID="new-course-btn" label="Lägg till" small onPress={addCourse} disabled={!newCourse.trim()} />
+        <Button testID="new-course-btn" label="Lägg till" small onPress={addCourse} disabled={!newCourse.trim()} style={{ flexShrink: 0 }} />
       </View>
     </View>
   );
@@ -308,7 +308,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   row: { flex: 1, flexDirection: "row" },
   sidebar: { padding: 16, gap: 8 },
-  sidebarWide: { width: 280, backgroundColor: colors.sidebar, borderRightWidth: 1, borderRightColor: colors.border },
+  sidebarWide: { width: 340, backgroundColor: colors.sidebar, borderRightWidth: 1, borderRightColor: colors.border },
   sidebarNarrow: { flex: 1 },
   brandRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 },
   logo: { width: 32, height: 32, borderRadius: 9, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
@@ -322,7 +322,7 @@ const styles = StyleSheet.create({
   courseName: { flex: 1, fontSize: 15, color: colors.text, fontWeight: "500" },
   count: { fontSize: 13, color: colors.muted },
   inlineAdd: { flexDirection: "row", gap: 8, alignItems: "center", marginTop: 8 },
-  addInput: { flex: 1, minHeight: 40, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: 12, fontSize: 15, color: colors.text, backgroundColor: colors.surface },
+  addInput: { flex: 1, minWidth: 0, minHeight: 40, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: 12, fontSize: 15, color: colors.text, backgroundColor: colors.surface },
   main: { flex: 1, padding: 24, gap: 12, maxWidth: 1000 },
   mainHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
   h1: { fontSize: 26, fontWeight: "800", color: colors.text, flexShrink: 1 },
