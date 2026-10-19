@@ -54,3 +54,4 @@ templates, settings{id:"global",speed_mode,primary_provider}, uploads.
 - Railway prep: backend/Dockerfile+railway.json+.dockerignore, frontend/Dockerfile (static expo export + serve)+railway.json+serve.json+.dockerignore, /app/RAILWAY.md guide (Atlas, env vars). Repo iosscanner branch main (fullscanner merged).
 - Railway now ONE service: root Dockerfile (stage1 expo web export with EXPO_PUBLIC_BACKEND_URL='' -> relative /api; stage2 python + WEB_DIR=/srv/web), root railway.json + .dockerignore. server.py serves WEB_DIR catch-all (doc/preview [id].html) when WEB_DIR set. Per-folder Railway files removed.
 - Removed unused emergentintegrations from backend/requirements.txt (Railway build failed: not on PyPI).
+- Dockerfile: yarn.lock optional (wasn't in GitHub repo); frontend/yarn.lock force-added to git.

@@ -4,8 +4,11 @@
 # ---- 1. Build the web app ----
 FROM node:22-slim AS web
 WORKDIR /web
-COPY frontend/package.json frontend/yarn.lock ./
-RUN corepack enable && yarn install --frozen-lockfile --network-timeout 600000
+# yarn.lock is optional (it may not be in the GitHub repo); use it when present
+COPY frontend/package.json frontend/yarn.lock* ./
+RUN corepack enable \
+ && if [ -f yarn.lock ]; then yarn install --frozen-lockfile --network-timeout 600000; \
+    else yarn install --network-timeout 600000; fi
 COPY frontend/ ./
 # Empty = the web app calls /api on its own domain (same server)
 ENV EXPO_PUBLIC_BACKEND_URL=""
