@@ -6,7 +6,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
-import { api, exportUrl, uploadFile, type Doc, type Page, type PickedFile } from "@/src/api";
+import { api, exportUrl, uploadFile, type Doc, type Page, type PickedFile, documentDeleted } from "@/src/api";
 import { Button } from "@/src/components/ui";
 import { PageCard } from "@/src/components/PageCard";
 import { AiPanel } from "@/src/components/AiPanel";
@@ -29,6 +29,7 @@ export default function DocScreen() {
   const [selected, setSelected] = useState<string[]>([]);
   const [aiOpen, setAiOpen] = useState(false);
   const [title, setTitle] = useState("");
+  const titleRef = useRef<TextInput>(null);
   const [editingGen, setEditingGen] = useState(false);
   const [genDraft, setGenDraft] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
@@ -138,6 +139,7 @@ export default function DocScreen() {
         }
       }
       mounted.current = false; // stop polling this (now deleted) document
+      documentDeleted(String(id));
       if (router.canGoBack()) router.back();
       else router.replace("/archive");
     };
@@ -203,7 +205,10 @@ export default function DocScreen() {
         <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace("/archive"))} style={styles.icon} accessibilityLabel="Tillbaka" testID="doc-back">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
-        <TextInput testID="doc-title" style={styles.title} value={title} onChangeText={setTitle} onBlur={saveTitle} onSubmitEditing={saveTitle} />
+        <TextInput ref={titleRef} testID="doc-title" style={styles.title} value={title} onChangeText={setTitle} onBlur={saveTitle} onSubmitEditing={saveTitle} />
+        <Pressable testID="doc-rename" onPress={() => titleRef.current?.focus()} style={styles.icon} accessibilityLabel="Byt namn på dokument">
+          <Ionicons name="create-outline" size={20} color={colors.primary} />
+        </Pressable>
         <Pressable onPress={deleteDoc} disabled={deleting} style={[styles.icon, deleting && { opacity: 0.4 }]} accessibilityLabel="Ta bort dokument" testID="doc-delete">
           <Ionicons name="trash-outline" size={20} color={colors.danger} />
         </Pressable>

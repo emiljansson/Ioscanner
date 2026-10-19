@@ -5,7 +5,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { api, type Course, type Doc } from "@/src/api";
+import { api, type Course, type Doc, onDocumentDeleted } from "@/src/api";
+import { RenameModal } from "@/src/components/RenameModal";
 import { Button } from "@/src/components/ui";
 import { colors, radius } from "@/src/theme";
 
@@ -32,6 +33,18 @@ export default function Archive() {
   const [hits, setHits] = useState<Hit[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [renaming, setRenaming] = useState<{ kind: "course" | "doc"; id: string; name: string } | null>(null);
+
+  const rename = async (name: string) => {
+    if (!renaming) return;
+    if (renaming.kind === "course") {
+      await api(`/courses/${renaming.id}`, { method: "PATCH", body: { name } });
+      setCourses((cs) => cs?.map((c) => (c.id === renaming.id ? { ...c, name } : c)) ?? cs);
+    } else {
+      await api(`/documents/${renaming.id}`, { method: "PATCH", body: { title: name } });
+      setDocs((ds) => ds?.map((d) => (d.id === renaming.id ? { ...d, title: name } : d)) ?? ds);
+    }
+  };
 
   const loadCourses = useCallback(async () => {
     try {
@@ -60,6 +73,15 @@ export default function Archive() {
       loadCourses();
       if (selectedRef.current) loadDocs(selectedRef.current);
     }, [loadCourses, loadDocs])
+  );
+  useEffect(
+    () =>
+      onDocumentDeleted((id) => {
+        setDocs((d) => d?.filter((x) => x.id !== id) ?? d);
+        setHits((h) => h?.filter((x) => x.document_id !== id) ?? h);
+        loadCourses(); // document counts
+      }),
+    [loadCourses]
   );
   useEffect(() => {
     setDocs(null);
@@ -208,6 +230,9 @@ export default function Archive() {
         <Text style={styles.h1} numberOfLines={1}>
           {course.name}
         </Text>
+        <Pressable testID="rename-course" style={styles.iconBtn} accessibilityLabel="Byt namn på kurs" onPress={() => setRenaming({ kind: "course", id: course.id, name: course.name })}>
+          <Ionicons name="create-outline" size={20} color={colors.primary} />
+        </Pressable>
         <View style={{ flex: 1 }} />
         <Pressable
           testID="delete-course"
@@ -250,7 +275,9 @@ export default function Archive() {
           contentContainerStyle={{ gap: 10, paddingBottom: 40 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await loadDocs(course.id); setRefreshing(false); }} />}
           ListEmptyComponent={<Text style={styles.empty}>Inga dokument än. Skapa ett och ladda upp bilder eller PDF:er.</Text>}
-          renderItem={({ item }) => <DocCard doc={item} onPress={() => router.push(`/doc/${item.id}`)} />}
+          renderItem={({ item }) => (
+            <DocCard doc={item} onPress={() => router.push(`/doc/${item.id}`)} onRename={() => setRenaming({ kind: "doc", id: item.id, name: item.title })} />
+          )}
         />
       )}
     </View>
@@ -258,6 +285,15 @@ export default function Archive() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+      {renaming && (
+        <RenameModal
+          title={renaming.kind === "course" ? "Byt namn på kurs" : "Byt namn på dokument"}
+          initial={renaming.name}
+          maxLength={renaming.kind === "course" ? 120 : 200}
+          onSave={rename}
+          onClose={() => setRenaming(null)}
+        />
+      )}
       {error && <Text style={styles.error}>{error}</Text>}
       {wide ? (
         <View style={styles.row}>
@@ -278,7 +314,7 @@ export default function Archive() {
   );
 }
 
-function DocCard({ doc, onPress }: { doc: Doc; onPress: () => void }) {
+function DocCard({ doc, onPress, onRename }: { doc: Doc; onPress: () => void; onRename: () => void }) {
   const c = doc.page_counts ?? {};
   const pending = (c.queued ?? 0) + (c.processing ?? 0);
   return (
@@ -288,6 +324,9 @@ function DocCard({ doc, onPress }: { doc: Doc; onPress: () => void }) {
         <Text style={styles.docTitle} numberOfLines={1}>
           {doc.title}
         </Text>
+        <Pressable testID={`rename-doc-${doc.id}`} onPress={onRename} hitSlop={8} style={styles.renameBtn} accessibilityLabel="Byt namn på dokument">
+          <Ionicons name="create-outline" size={18} color={colors.muted} />
+        </Pressable>
       </View>
       <Text style={styles.meta}>
         {doc.kind === "generated"
@@ -326,6 +365,7 @@ const styles = StyleSheet.create({
   main: { flex: 1, padding: 24, gap: 12, maxWidth: 1000 },
   mainHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
   h1: { fontSize: 26, fontWeight: "800", color: colors.text, flexShrink: 1 },
+  renameBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center", marginLeft: "auto" },
   docCard: { backgroundColor: colors.surface, borderRadius: radius.md, padding: 16, borderWidth: 1, borderColor: colors.border, gap: 6 },
   docRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   docTitle: { fontSize: 16, fontWeight: "600", color: colors.text, flex: 1 },

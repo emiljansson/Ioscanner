@@ -1,0 +1,30 @@
+{
+  "summary": "Verified auto-reload on document delete (iteration 21). Backend: Cache-Control: no-store header is correctly applied by the no_store_api middleware to all tested /api endpoints — /api/health, /api/courses, /api/documents, /api/auth/me (5/5 pytests PASS in test_no_store_cache.py). Frontend desktop (1280x800) and mobile (390x844) delete flows PASS end-to-end: logged in via UI (test@copythat.app / 246810), created a test course + 2 docs, opened one doc, tapped doc-delete, accepted window.confirm, and verified that (a) the list of docs on /archive immediately drops from 2 → 1 WITHOUT a reload, (b) the sidebar course count also decreases (2 → 1 observed on desktop), (c) search hits for the deleted title also disappear immediately after delete+return (desktop), and (d) deep-link delete (opening /doc/<id> directly without history, then deleting) correctly lands on /archive with the deleted doc no longer in the list (mobile). documentDeleted(id) + onDocumentDeleted listener in archive.tsx and the cache:'no-store' fetch option in api.ts both behave as intended.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_no_store_cache.py",
+    "/app/test_reports/pytest/pytest_results_iter21.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py no_store_api middleware (L843-849) correctly checks 'cache-control' not in response.headers before setting no-store, so export/filedownload responses with their own cache headers are preserved.",
+    "archive.tsx onDocumentDeleted listener (L64-72) updates docs, hits AND reloads loadCourses() for counts — correct and complete.",
+    "doc/[id].tsx deleteDoc (L126-148) treats 404 as success (idempotent double-tap), sets mounted.current=false to stop polling, calls documentDeleted(id) BEFORE navigation, and falls back to router.replace('/archive') when canGoBack() is false (deep-link case) — all correct.",
+    "api.ts api() uses cache:'no-store' on every fetch (L68) — correct iOS/Safari fix."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_no_store_cache.py (new)"
+  ],
+  "success_rate": {"backend": "100% (5/5)", "frontend": "100% (desktop + mobile delete, search-delete, deep-link delete all PASS)"},
+  "seed_data_creation": "Created test courses TEST_Del_desktop_* and TEST_Del_mobile_* with 2 docs each via UI; all test data was removed through the UI delete-course trash button and a final API cleanup sweep (0 courses remaining under test user).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Login via UI flow on /login (testIDs: login-email, login-send-code, login-code with 246810, login-verify). AsyncStorage on web uses IndexedDB, NOT localStorage. For mobile viewport (<900px wide), after creating a course from the sidebar screen you must tap the course row to switch to the doc-list screen before new-doc-input is rendered. For deep-link delete tests use page.goto('/doc/<id>') directly — doc/[id].tsx correctly uses router.replace('/archive') when there's no history.",
+  "rca_of_issue": "Not a bug this iteration — this was fix verification. The reported user issue (deleted docs still shown until app restart) was caused by iOS/browser caching GET /api/documents (and no in-app event when a doc was deleted from the doc screen). Fix verified: (1) backend no_store_api middleware adds Cache-Control: no-store to /api/* responses; (2) frontend api.ts fetch uses cache:'no-store'; (3) doc/[id].tsx calls documentDeleted(id) after a successful delete and archive.tsx subscribes via onDocumentDeleted to drop the doc from docs/hits and reload course counts immediately — plus useFocusEffect still reloads on return. All three layers were observed working together in both desktop and mobile viewports."
+}

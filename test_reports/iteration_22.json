@@ -1,0 +1,26 @@
+{
+  "summary": "Verified new rename-course / rename-doc edit buttons (iteration 22). ALL scenarios PASS on desktop 1280x800 and mobile 390x844 against the live preview URL. Login via UI (test@copythat.app / 246810). Desktop: created TEST_Rename -> rename-course opens rename-modal; Spara is disabled when input is unchanged AND when empty; typing new name + Spara closes modal, header + sidebar immediately show new name, and reload confirms persistence. rename-cancel closes without change; tapping outside the card (backdrop Pressable) also closes without change. Created doc TEST_DocA inside the course; on /doc/[id] page the new pencil doc-rename correctly focuses the doc-title TextInput, typing + Enter saves (verified by reload showing new title). Back on /archive the rename-doc-<id> pencil opens the rename modal WITHOUT opening the document (URL stayed on /archive) and the new title appears on the card both immediately and after reload. Mobile 390x844: course rename and doc rename both work end-to-end; the modal fits on screen (342x177 at x=24,y=333 inside a 390x844 viewport). Clean-up performed via delete-course trash button on both viewports (0 TEST_* courses remaining).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "RenameModal.tsx: `valid = name.trim().length > 0 && name.trim() !== initial` correctly disables Spara both for empty input and for unchanged value — verified in UI.",
+    "RenameModal.tsx: full-screen Pressable with StyleSheet.absoluteFill behind the card gives correct tap-outside-to-close behaviour (verified).",
+    "archive.tsx DocCard: rename pencil is a nested Pressable inside the card Pressable; on web the inner Pressable correctly stops propagation so tapping the pencil does NOT navigate to /doc/<id> (verified — URL stayed on /archive).",
+    "archive.tsx rename(): correctly uses PATCH /api/courses/{id} with {name} and PATCH /api/documents/{id} with {title}, and updates state locally for immediate UI feedback; also persists on reload.",
+    "doc/[id].tsx: doc-rename pencil calls titleRef.current?.focus() which places the native caret in the TextInput; saveTitle fires on both onBlur and onSubmitEditing (Enter) — both paths verified."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only request)", "frontend": "100% (6/6 scenarios across desktop + mobile)"},
+  "seed_data_creation": "Created TEST_Rename -> renamed to TEST_Rename_v2 with doc TEST_DocA -> TEST_DocA_v2 -> TEST_DocA_v3 on desktop; TEST_RenameM -> TEST_RenameM_v2 with TEST_DocM -> TEST_DocM_v2 on mobile. All test data deleted via delete-course trash at end of each run (sidebar on mobile confirmed 'Skapa din första kurs' empty state after cleanup).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Login env uses EXPO_PUBLIC_BACKEND_URL in /app/frontend/.env (currently https://smart-doc-scan-6.preview.emergentagent.com). On mobile viewport (<900px) addCourse auto-selects the new course and the UI switches to the doc-list screen so rename-course is immediately available; on desktop the sidebar+main split layout keeps both visible. The rename-course pencil has testID 'rename-course'; each doc card pencil is 'rename-doc-<docId>'. The on-doc-page pencil has testID 'doc-rename' and simply focuses the existing 'doc-title' TextInput (no modal).",
+  "rca_of_issue": "n/a — feature verification, no bug reported."
+}

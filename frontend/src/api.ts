@@ -48,11 +48,24 @@ async function parse(res: Response) {
   return data;
 }
 
+// Lets lists drop a deleted document immediately, without waiting for a reload.
+const deletedListeners = new Set<(id: string) => void>();
+export function onDocumentDeleted(fn: (id: string) => void) {
+  deletedListeners.add(fn);
+  return () => {
+    deletedListeners.delete(fn);
+  };
+}
+export function documentDeleted(id: string) {
+  deletedListeners.forEach((fn) => fn(id));
+}
+
 export async function api<T = any>(path: string, opts: { method?: string; body?: any } = {}): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${API_URL}${path}`, {
       method: opts.method ?? (opts.body ? "POST" : "GET"),
+      cache: "no-store", // never show stale lists (iOS caches GETs otherwise)
       headers: {
         ...(opts.body ? { "Content-Type": "application/json" } : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),

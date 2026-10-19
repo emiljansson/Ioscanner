@@ -840,6 +840,15 @@ if WEB_DIR and (WEB_DIR / "index.html").is_file():
             return FileResponse(dynamic, headers={"Cache-Control": "no-cache"})
         return FileResponse(WEB_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
+@app.middleware("http")
+async def no_store_api(request, call_next):
+    """API data changes all the time – stop browsers/iOS from serving cached lists."""
+    response = await call_next(request)
+    if request.url.path.startswith("/api/") and "cache-control" not in response.headers:
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 app.add_middleware(CORSMiddleware, allow_credentials=False, allow_origins=["*"], allow_methods=["*"],
                    allow_headers=["*"])
 
