@@ -50,3 +50,4 @@ templates, settings{id:"global",speed_mode,primary_provider}, uploads.
 - Settings: 'Mejla skriptet till mig' (POST /api/scanner/script/email?base=) for iPhone users; script stored in CommHub, link emailed.
 - Model picker: owner taps model name in Settings > AI-tjänster -> ModelPicker lists live models (GET /api/settings/models/{provider}); PUT /settings {model_override:{provider,mode,model|null}} stored in settings.model_overrides; ai.model_for() used everywhere.
 - Note: in preview the backend supervisor program has autostart=false (read-only config); after a pod restart run 'sudo supervisorctl start backend' (502 otherwise). Web preview URL: https://smart-doc-scan-6.preview.emergentagent.com
+- Settings card renamed 'Skanna från datorn' explaining 1) ScanBridge 'Scanna' button (web, adds to open doc) and 2) NAPS2 script.

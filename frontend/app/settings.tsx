@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
+import { SCANBRIDGE_DOWNLOAD } from "@/src/scanbridge";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -198,9 +199,22 @@ export default function SettingsScreen() {
 
         {scanner && (
           <View style={styles.card} testID="scanner-card">
-            <Text style={styles.h2}>Skanner (NAPS2)</Text>
-            <Text style={styles.muted}>Skanna på Windows-datorn med ett dubbelklick. Varje skanning blir ett nytt dokument i mappen du väljer här, och AI-läsningen startar direkt.</Text>
-            <Text style={styles.optLabel}>Mapp för skanningar</Text>
+            <Text style={styles.h2}>Skanna från datorn</Text>
+            <Text style={styles.muted}>Det finns två sätt att skanna med en skanner som är kopplad till en Windows-dator:</Text>
+
+            <View style={styles.way} testID="scan-way-scanbridge">
+              <Text style={styles.wayTitle}>1. Knappen ”Scanna” i webbversionen (ScanBridge)</Text>
+              <Text style={styles.muted}>Öppna ett dokument i CopyThat i webbläsaren och tryck på ”Scanna”. Sidorna läggs till i dokumentet som är öppet. Programmet ScanBridge måste vara igång på datorn (ladda ner det via knappen ”Scanna”). Passar bra när du vill fylla på ett dokument som du redan arbetar med.</Text>
+              {Platform.OS === "web" && (
+                <Button testID="scanbridge-download" small icon="download-outline" label="Ladda ner ScanBridge" onPress={() => Linking.openURL(SCANBRIDGE_DOWNLOAD)} style={{ alignSelf: "flex-start" }} />
+              )}
+            </View>
+
+            <View style={styles.way} testID="scan-way-naps2">
+              <Text style={styles.wayTitle}>2. NAPS2-skript – utan webbläsare</Text>
+              <Text style={styles.muted}>Dubbelklicka på skriptet på datorn så skannar NAPS2 och skickar till CopyThat. Varje skanning blir ett nytt dokument i mappen nedan och AI-läsningen startar direkt. Webbläsaren behöver inte vara öppen.</Text>
+            </View>
+            <Text style={styles.optLabel}>Mapp för skanningar med NAPS2-skriptet</Text>
             <View style={styles.chips}>
               {courses.map((c) => {
                 const on = (scanner.course_id ?? courses.find((x) => x.name === "Inkorg")?.id) === c.id;
@@ -284,6 +298,8 @@ const styles = StyleSheet.create({
   chipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipText: { fontSize: 14, fontWeight: "600", color: colors.text },
   key: { flex: 1, fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), fontSize: 13, color: colors.text, backgroundColor: colors.bg, borderRadius: radius.sm, paddingHorizontal: 10, paddingVertical: 8 },
+  way: { gap: 6, padding: 12, borderRadius: radius.md, backgroundColor: colors.bg },
+  wayTitle: { fontSize: 15, fontWeight: "700", color: colors.text },
   modelBtn: { flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start", minHeight: 32, marginTop: 2 },
   modelText: { fontSize: 14, color: colors.primary, fontWeight: "600", textDecorationLine: "underline" },
   ok: { padding: 12, color: colors.ok, backgroundColor: colors.okSoft, borderRadius: radius.md },
